@@ -78,23 +78,67 @@ function renderTables() {
   const grid = document.getElementById('table-grid');
   if (!grid) return;
 
-  grid.innerHTML = tables.map(t => `
-    <div class="table-card ${t.status == 0 || t.status === 'idle' ? 'idle' : ''}">
-      <div class="felt-top">
-        <span class="tname">${t.name}</span>
-        <span class="status-dot ${t.status == 1 ? 'live' : 'idle'}">
-          <span class="dot"></span>${t.status == 1 ? 'In Play' : 'Free'}
-        </span>
-      </div>
-      <div class="body">
-        <div style="margin-top:auto;">
-          ${t.status == 1
-      ? `<button class="btn btn-primary btn-block" onclick="openLive(${t.id})">Manage Table</button>`
-      : `<button class="btn btn-primary btn-block" onclick="openSetup(${t.id})">Start Frame</button>`}
+  grid.innerHTML = tables.map(t => {
+    const session = activeSessions.find(s => s.pool_table_id == t.id && s.status === 'active');
+
+    let playersHtml = '';
+    let gameInfo = '';
+    let timeHtml = '';
+    let isTimeOver = false;
+    let cardExtraClass = t.status == 0 ? 'idle' : '';
+
+    if (session) {
+      const players = session.players || [];
+      const playerNames = players.map(p => p.player_name).join(' vs ');
+      const gameName = session.game_type?.game_name || 'Game';
+      const gameTimeMin = timeToMinutes(session.game_type?.time) || 0;
+      const gameTimeMs = gameTimeMin * 60 * 1000;
+
+      const start = new Date(session.start_time).getTime();
+      const elapsedMs = Date.now() - start;
+      const remainingMs = Math.max(0, gameTimeMs - elapsedMs);
+
+      isTimeOver = remainingMs <= 0;
+
+      if (isTimeOver) {
+        cardExtraClass += ' time-over';
+      }
+
+      playersHtml = `<div class="sub-row"><span>Players</span><b>${playerNames || '—'}</b></div>`;
+      gameInfo = `<div class="game-badge">🔴 ${gameName}</div>`;
+
+      timeHtml = `
+        <div class="timer-display table-timer" 
+             data-start="${start}" 
+             data-limit="${gameTimeMs}"
+             style="font-size:20px; ${isTimeOver ? 'color:#e8837a;' : ''}">
+          ${isTimeOver ? '00:00:00' : fmtTime(remainingMs)}
+        </div>
+        <div class="sub-row"><span>Limit</span><b>${gameTimeMin} min</b></div>
+      `;
+    }
+
+    return `
+      <div class="table-card ${cardExtraClass}" data-table-id="${t.id}">
+        <div class="felt-top">
+          <span class="tname">${t.name}</span>
+          <span class="status-dot ${t.status == 1 ? 'live' : 'idle'}">
+            <span class="dot"></span>${t.status == 1 ? 'In Play' : 'Free'}
+          </span>
+        </div>
+        <div class="body">
+          ${gameInfo}
+          ${playersHtml}
+          ${timeHtml}
+          <div style="margin-top:auto; padding-top:10px;">
+            ${t.status == 1 
+              ? `<button class="btn btn-primary btn-block" onclick="openLive(${t.id})">Manage Table</button>` 
+              : `<button class="btn btn-primary btn-block" onclick="openSetup(${t.id})">Start Frame</button>`}
+          </div>
         </div>
       </div>
-    </div>
-  `).join('');
+    `;
+  }).join('');
 }
 
 function renderStock() {
@@ -255,6 +299,24 @@ document.addEventListener('DOMContentLoaded', () => {
     const currentView = activeBtn ? activeBtn.dataset.view : 'dashboard';
     switchView(currentView);
   });
+
+ // Live countdown for tables tab (every 1 second)
+setInterval(() => {
+  document.querySelectorAll('.table-timer').forEach(el => {
+    const start = parseInt(el.dataset.start);
+    const limit = parseInt(el.dataset.limit);
+    if (!start || !limit) return;
+
+    const remainingMs = Math.max(0, limit - (Date.now() - start));
+    el.textContent = remainingMs <= 0 ? '00:00:00' : fmtTime(remainingMs);
+
+    // Red color when over
+    if (remainingMs <= 0) {
+      el.style.color = '#e8837a';
+      el.closest('.table-card')?.classList.add('time-over');
+    }
+  });
+}, 1000);
 
   document.querySelectorAll('nav.side-nav button[data-view]').forEach(btn => {
     btn.addEventListener('click', (e) => {
@@ -550,29 +612,56 @@ function openSetup(tableId) {
 
   document.getElementById('setup-title').textContent = `Start Frame — ${table.name}`;
   document.getElementById('setup-table-id').value = tableId;
+  document.getElementById('setup-game-type-id').value = '';
   document.getElementById('player1-name').value = '';
   document.getElementById('player2-name').value = '';
 
-  // Game Types of this table
-  const select = document.getElementById('setup-game-type');
-  select.innerHTML = '<option value="">-- Select Game Type --</option>';
+  const container = document.getElementById('setup-game-options');
+  container.innerHTML = '';
 
   const tableGames = gameTypes.filter(g => g.pool_table_id == tableId && g.status == 1);
 
+  // Ball colors for different games (visual only)
+  const ballSets = [
+    ['#c1453a', '#d4a72c', '#2f6f3e'],
+    ['#c1453a', '#c1453a', '#d4a72c'],
+    ['#c1453a', '#c1453a', '#c1453a'],
+    ['#8b929b', '#8b929b', '#8b929b'],
+    ['#3b82f6', '#c1453a', '#d4a72c'],
+    ['#10b981', '#c1453a', '#8b929b'],
+  ];
+
   if (tableGames.length === 0) {
-    select.innerHTML = '<option value="">No game types for this table</option>';
+    container.innerHTML = `<div style="grid-column:1/-1; text-align:center; color:#888; padding:20px;">No game types available for this table</div>`;
   } else {
-    tableGames.forEach(g => {
-      select.innerHTML += `<option value="${g.id}">${g.game_name} — ${money(g.price)}/hr</option>`;
+    tableGames.forEach((g, index) => {
+      const timeMin = timeToMinutes(g.time) || 0;
+      const colors = ballSets[index % ballSets.length];
+
+      const div = document.createElement('div');
+      div.className = 'game-opt';
+      div.dataset.id = g.id;
+      div.innerHTML = `
+        <div class="balls">
+          ${colors.map(c => `<span class="ball-dot" style="background:${c}"></span>`).join('')}
+        </div>
+        <div class="gname">${g.game_name}</div>
+        <div class="grate">${money(g.price)} • ${timeMin} min</div>
+      `;
+      div.onclick = () => {
+        document.querySelectorAll('#setup-game-options .game-opt').forEach(o => o.classList.remove('selected'));
+        div.classList.add('selected');
+        document.getElementById('setup-game-type-id').value = g.id;
+      };
+      container.appendChild(div);
     });
   }
 
   openModal('setup-modal');
 }
-
 async function startGame() {
   const tableId = document.getElementById('setup-table-id').value;
-  const gameTypeId = document.getElementById('setup-game-type').value;
+  const gameTypeId = document.getElementById('setup-game-type-id').value;
   const player1 = document.getElementById('player1-name').value.trim();
   const player2 = document.getElementById('player2-name').value.trim();
 
@@ -601,10 +690,9 @@ async function startGame() {
     });
 
     if (res.ok) {
-      const session = await res.json();
       closeModal('setup-modal');
-      await loadData();          // refresh tables
-      openLive(tableId);         // open live view
+      await loadData();
+      openLive(tableId);
     } else {
       const err = await res.json();
       alert(err.message || 'Failed to start game');
@@ -614,7 +702,6 @@ async function startGame() {
     alert('Network error');
   }
 }
-
 
 
 /* ================= LIVE VIEW ================= */
@@ -707,14 +794,34 @@ function openAddOrder(playerNum) {
   document.getElementById('order-player-name').textContent = player.player_name;
   document.getElementById('order-player-id').value = player.id;
   document.getElementById('order-session-id').value = currentSession.id;
+  document.getElementById('order-item-id').value = '';
   document.getElementById('order-qty').value = 1;
 
-  // Fill stock items
-  const select = document.getElementById('order-item');
-  select.innerHTML = '<option value="">-- Select Item --</option>';
-  stock.filter(s => s.quantity > 0).forEach(item => {
-    select.innerHTML += `<option value="${item.id}">${item.item_name} — ${money(item.price)} (${item.quantity} left)</option>`;
-  });
+  const grid = document.getElementById('order-item-grid');
+  grid.innerHTML = '';
+
+  const available = stock.filter(s => s.quantity > 0);
+
+  if (available.length === 0) {
+    grid.innerHTML = `<div style="grid-column:1/-1; text-align:center; color:#888; padding:20px;">No items in stock</div>`;
+  } else {
+    available.forEach(item => {
+      const div = document.createElement('div');
+      div.className = 'item-btn';
+      div.dataset.id = item.id;
+      div.innerHTML = `
+        <div class="emoji">🧾</div>
+        <div class="iname">${item.item_name}</div>
+        <div class="iprice">${money(item.price)} • ${item.quantity} left</div>
+      `;
+      div.onclick = () => {
+        document.querySelectorAll('#order-item-grid .item-btn').forEach(b => b.classList.remove('selected'));
+        div.classList.add('selected');
+        document.getElementById('order-item-id').value = item.id;
+      };
+      grid.appendChild(div);
+    });
+  }
 
   openModal('order-modal');
 }
@@ -722,7 +829,7 @@ function openAddOrder(playerNum) {
 async function saveOrder() {
   const sessionId = document.getElementById('order-session-id').value;
   const playerId = document.getElementById('order-player-id').value;
-  const inventoryId = document.getElementById('order-item').value;
+  const inventoryId = document.getElementById('order-item-id').value;
   const qty = parseInt(document.getElementById('order-qty').value) || 1;
 
   if (!inventoryId) {
@@ -747,7 +854,6 @@ async function saveOrder() {
 
     if (res.ok) {
       closeModal('order-modal');
-      // Reload session
       await openLive(currentTableId);
     } else {
       const err = await res.json();

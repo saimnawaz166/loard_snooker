@@ -5,12 +5,11 @@
     <div class="sub">Select game type and enter player names.</div>
 
     <input type="hidden" id="setup-table-id">
+    <input type="hidden" id="setup-game-type-id">
 
-    <div class="field">
-      <label>Game Type</label>
-      <select id="setup-game-type">
-        <option value="">-- Select Game Type --</option>
-      </select>
+    <!-- Game Type Cards -->
+    <div class="game-options" id="setup-game-options" style="margin-bottom:18px;">
+      <!-- JS se cards aayenge -->
     </div>
 
     <div class="field-row">
@@ -111,18 +110,17 @@
 
 <!-- ================= ADD ORDER MODAL ================= -->
 <div class="modal-backdrop" id="order-modal">
-  <div class="modal">
+  <div class="modal" style="width:560px;">
     <h3>Add Item to <span id="order-player-name">Player</span></h3>
     <div class="sub">Select item and quantity.</div>
 
     <input type="hidden" id="order-player-id">
     <input type="hidden" id="order-session-id">
+    <input type="hidden" id="order-item-id">
 
-    <div class="field">
-      <label>Item</label>
-      <select id="order-item">
-        <option value="">-- Select Item --</option>
-      </select>
+    <!-- Item Cards -->
+    <div class="item-grid" id="order-item-grid" style="margin-bottom:16px; max-height:280px; overflow-y:auto;">
+      <!-- JS se cards aayenge -->
     </div>
 
     <div class="field">

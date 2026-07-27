@@ -72,7 +72,7 @@ class CueboardController extends Controller
     // API for Active Sessions
     public function getActiveSessions()
     {
-        $sessions = PoolGameSession::with(['table', 'gameType', 'players'])
+        $sessions = PoolGameSession::with(['players', 'gameType', 'table'])
             ->where('status', 'active')
             ->get();
         return response()->json($sessions);

@@ -196,9 +196,71 @@
   .field{ margin-bottom:14px; }
   .field label{ display:block; font-size:12px; color:var(--text-dim); margin-bottom:6px; font-weight:600; }
   .field input, .field select{ width:100%; background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:10px 12px; color:var(--cream); font-family:'Inter'; font-size:13.5px; }
+
+  table-card.time-over {
+  border-color: #c1453a !important;
+  background: linear-gradient(160deg, #2a1515 0%, #1a0f0f 100%) !important;
+}
+.table-card.time-over .felt-top {
+  background: linear-gradient(135deg, #7a2019 0%, #4a1010 100%) !important;
+  filter: none !important;
+}
   .field-row{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
 
   .module-note{ font-size:12px; color:var(--text-faint); margin-top:30px; text-align:center; }
+
+  .game-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.game-opt {
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  cursor: pointer;
+  background: var(--bg);
+  transition: all .15s ease;
+}
+
+.game-opt:hover {
+  border-color: var(--brass-dim);
+}
+
+.game-opt.selected {
+  border-color: var(--felt-light);
+  background: rgba(23,122,74,0.12);
+}
+
+.game-opt .balls {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.ball-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.game-opt .gname {
+  font-weight: 600;
+  font-size: 13.5px;
+}
+
+.game-opt .grate {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 2px;
+  font-family: 'JetBrains Mono';
+}
+.item-btn.selected {
+  border-color: var(--felt-light) !important;
+  background: rgba(23,122,74,0.15) !important;
+}
     </style>
 </head>
 <body>
