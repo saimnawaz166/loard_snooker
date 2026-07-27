@@ -15,12 +15,26 @@
     <button data-view="settings"><span class="ico">⚙</span> Settings</button>
   </nav>
   <div class="sidebar-footer">
-    <div class="biz-card">
-      <div class="biz-avatar">🎱</div>
-      <div>
-        <div class="biz-name">Break &amp; Cue Club</div>
-        <div class="biz-role">Manager · Lahore</div>
-      </div>
+  <div class="biz-card">
+    <div class="biz-avatar">🎱</div>
+    <div>
+      <div class="biz-name">{{ Auth::user()->name ?? 'Manager' }}</div>
+      <div class="biz-role">{{ Auth::user()->email ?? '' }}</div>
     </div>
   </div>
+
+  <div style="margin-top:12px; display:flex; gap:8px;">
+    <button type="button" class="btn btn-outline" style="flex:1; font-size:12px;" 
+        onclick="switchView('profile')">
+  Profile
+</button>
+
+    <form method="POST" action="{{ route('logout') }}" style="flex:1;">
+      @csrf
+      <button type="submit" class="btn btn-outline" style="width:100%; font-size:12px;">
+        Logout
+      </button>
+    </form>
+  </div>
+</div>
 </aside>

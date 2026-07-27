@@ -39,4 +39,5 @@
     @include('cueboard.modals')
     @include('cueboard.live')
     @include('cueboard.receipt')
+    @include('cueboard.profile')
 @endsection

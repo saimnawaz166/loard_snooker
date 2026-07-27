@@ -12,6 +12,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Auth;
+
 
 class CueboardController extends Controller
 {
@@ -330,5 +332,11 @@ class CueboardController extends Controller
         $session = PoolGameSession::findOrFail($id);
         $session->update(['payment_status' => 'unpaid']);
         return response()->json($session);
+    }
+    public function profile()
+    {
+        return view('cueboard.profile', [
+            'user' => auth()->user()
+        ]);
     }
 }
