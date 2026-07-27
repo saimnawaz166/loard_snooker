@@ -1,6 +1,4 @@
-@extends('layouts.cueboard')
 
-@section('content')
     <!-- ============ RECEIPT ============ -->
     <section class="view" id="view-receipt">
       <div class="page-head"><div><h2>Bill Summary</h2><p>Frame closed and added to billing history.</p></div></div>
@@ -10,4 +8,3 @@
         <button class="btn btn-primary" onclick="switchView('tables')">Back to Tables</button>
       </div>
     </section>
-@endsection

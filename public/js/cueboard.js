@@ -1,3 +1,46 @@
+/* ================= SWEET ALERT HELPERS ================= */
+function showSuccess(msg) {
+  Swal.fire({
+    icon: 'success',
+    title: 'Success',
+    text: msg,
+    timer: 1000,
+    showConfirmButton: false,
+    background: '#1a1f1c',
+    color: '#f0ebe0',
+    iconColor: '#2f6f3e'
+  });
+}
+
+function showError(msg) {
+  Swal.fire({
+    icon: 'error',
+    title: 'Error',
+    text: msg,
+    background: '#1a1f1c',
+    color: '#f0ebe0',
+    iconColor: '#c1453a',
+    confirmButtonColor: '#0f5132'
+  });
+}
+
+function showConfirm(msg) {
+  return Swal.fire({
+    title: 'Are you sure?',
+    text: msg,
+    icon: 'warning',
+    showCancelButton: true,
+    background: '#1a1f1c',
+    color: '#f0ebe0',
+    iconColor: '#d4a72c',
+    confirmButtonColor: '#0f5132',
+    cancelButtonColor: '#c1453a',
+    confirmButtonText: 'Yes',
+    cancelButtonText: 'Cancel'
+  });
+}
+
+
 /* ================= CUEBOARD JS - FULL BACKEND READY ================= */
 
 let tables = [];
@@ -131,9 +174,9 @@ function renderTables() {
           ${playersHtml}
           ${timeHtml}
           <div style="margin-top:auto; padding-top:10px;">
-            ${t.status == 1 
-              ? `<button class="btn btn-primary btn-block" onclick="openLive(${t.id})">Manage Table</button>` 
-              : `<button class="btn btn-primary btn-block" onclick="openSetup(${t.id})">Start Frame</button>`}
+            ${t.status == 1
+        ? `<button class="btn btn-primary btn-block" onclick="openLive(${t.id})">Manage Table</button>`
+        : `<button class="btn btn-primary btn-block" onclick="openSetup(${t.id})">Start Frame</button>`}
           </div>
         </div>
       </div>
@@ -205,7 +248,9 @@ function editStock(id) {
 }
 
 async function deleteStock(id) {
-  if (!confirm('Are you sure you want to delete this item?')) return;
+  // if (!confirm('Are you sure you want to delete this item?')) return;
+  const result = await showConfirm('Are you sure you want to delete this item?');
+  if (!result.isConfirmed) return;
 
   try {
     const res = await fetch(`/cueboard/api/stock/${id}`, {
@@ -218,13 +263,14 @@ async function deleteStock(id) {
     if (res.ok) {
       stock = stock.filter(s => s.id !== id);
       renderStock();
-      alert('Item deleted successfully');
+      showSuccess('Item deleted successfully')
+            // alert('Item deleted successfully');
     } else {
-      alert('Failed to delete');
+      showError('Failed to delete item');
     }
   } catch (e) {
     console.error(e);
-    alert('Error deleting item');
+    showError('Error deleting item');
   }
 }
 
@@ -252,11 +298,11 @@ async function adjustStock(id, delta) {
         document.getElementById('stat-low').textContent = stock.filter(s => s.quantity < 10).length;
       }
     } else {
-      alert('Failed to update stock');
+      showError('Failed to update stock');
     }
   } catch (e) {
     console.error(e);
-    alert('Error updating stock');
+    showError('Error updating stock');
   }
 }
 
@@ -271,6 +317,7 @@ function switchView(view) {
     activeView.classList.add('active');
   }
   if (view === 'settings') renderSettings();
+
 
   // Update active button
   document.querySelectorAll('nav.side-nav button').forEach(b => b.classList.remove('active'));
@@ -287,7 +334,7 @@ function switchView(view) {
     renderTables();
   }
   if (view === 'stock') renderStock();
-  if (view === 'billing') renderBilling();
+  if (view === 'billing') loadBilling(1);
 }
 
 /* INIT */
@@ -300,23 +347,23 @@ document.addEventListener('DOMContentLoaded', () => {
     switchView(currentView);
   });
 
- // Live countdown for tables tab (every 1 second)
-setInterval(() => {
-  document.querySelectorAll('.table-timer').forEach(el => {
-    const start = parseInt(el.dataset.start);
-    const limit = parseInt(el.dataset.limit);
-    if (!start || !limit) return;
+  // Live countdown for tables tab (every 1 second)
+  setInterval(() => {
+    document.querySelectorAll('.table-timer').forEach(el => {
+      const start = parseInt(el.dataset.start);
+      const limit = parseInt(el.dataset.limit);
+      if (!start || !limit) return;
 
-    const remainingMs = Math.max(0, limit - (Date.now() - start));
-    el.textContent = remainingMs <= 0 ? '00:00:00' : fmtTime(remainingMs);
+      const remainingMs = Math.max(0, limit - (Date.now() - start));
+      el.textContent = remainingMs <= 0 ? '00:00:00' : fmtTime(remainingMs);
 
-    // Red color when over
-    if (remainingMs <= 0) {
-      el.style.color = '#e8837a';
-      el.closest('.table-card')?.classList.add('time-over');
-    }
-  });
-}, 1000);
+      // Red color when over
+      if (remainingMs <= 0) {
+        el.style.color = '#e8837a';
+        el.closest('.table-card')?.classList.add('time-over');
+      }
+    });
+  }, 1000);
 
   document.querySelectorAll('nav.side-nav button[data-view]').forEach(btn => {
     btn.addEventListener('click', (e) => {
@@ -376,7 +423,7 @@ async function addStockItem() {
   const id = document.getElementById('ns-id')?.value || null;
 
   if (!name) {
-    alert('Please enter Item Name');
+    showError('Please enter Item Name');
     return;
   }
 
@@ -414,13 +461,13 @@ async function addStockItem() {
     if (res.ok) {
       closeModal('stock-modal');
       await loadData(); // refresh
-      alert(id ? 'Item updated!' : 'Item added!');
+      showSuccess(id ? 'Item updated!' : 'Item added!');
     } else {
-      alert('Failed to save');
+      showError('Failed to save item');
     }
   } catch (e) {
     console.error(e);
-    alert('Network error');
+    showError('Network error');
   }
 }
 
@@ -524,15 +571,15 @@ async function saveGameType() {
   const tableId = document.getElementById('gt-table').value;
 
   if (!name) {
-    alert('Please enter Game Name');
+    showError('Please enter Game Name');
     return;
   }
   if (!time) {
-    alert('Please enter Time (minutes)');
+    showError('Please enter Time (minutes)');
     return;
   }
   if (!tableId) {
-    alert('Please select a Table');
+    showError('Please select a Table');
     return;
   }
 
@@ -569,18 +616,19 @@ async function saveGameType() {
     if (res.ok) {
       closeModal('game-type-modal');
       await loadGameTypes();
-      alert(id ? 'Updated successfully!' : 'Added successfully!');
+      showSuccess(id ? 'Game type updated successfully!' : 'Game type added successfully!');
     } else {
-      alert('Failed to save');
+      showError('Failed to save game type');
     }
   } catch (e) {
     console.error(e);
-    alert('Network error');
+    showError('Network error');
   }
 }
 
 async function deleteGameType(id) {
-  if (!confirm('Are you sure you want to delete this game type?')) return;
+  const result = await showConfirm('Are you sure you want to delete this game type?');
+  if (!result.isConfirmed) return;
 
   try {
     const res = await fetch(`/cueboard/api/game-types/${id}`, {
@@ -592,13 +640,13 @@ async function deleteGameType(id) {
 
     if (res.ok) {
       await loadGameTypes();
-      alert('Deleted successfully');
+      showSuccess('Game type deleted successfully');
     } else {
-      alert('Failed to delete');
+      showError('Failed to delete game type');
     }
   } catch (e) {
     console.error(e);
-    alert('Error deleting');
+    showError('Error deleting game type');
   }
 }
 
@@ -666,11 +714,11 @@ async function startGame() {
   const player2 = document.getElementById('player2-name').value.trim();
 
   if (!gameTypeId) {
-    alert('Please select a Game Type');
+    showError('Please select a Game Type');
     return;
   }
   if (!player1 || !player2) {
-    alert('Please enter both player names');
+    showError('Please enter both player names');
     return;
   }
 
@@ -695,11 +743,11 @@ async function startGame() {
       openLive(tableId);
     } else {
       const err = await res.json();
-      alert(err.message || 'Failed to start game');
+      showError(err.message || 'Failed to start game');
     }
   } catch (e) {
     console.error(e);
-    alert('Network error');
+    showError('Network error');
   }
 }
 
@@ -715,7 +763,7 @@ async function openLive(tableId) {
   try {
     const res = await fetch(`/cueboard/api/active-session/${tableId}`);
     if (!res.ok) {
-      alert('No active session found on this table');
+      showError('No active session found on this table');
       switchView('tables');
       return;
     }
@@ -730,7 +778,7 @@ async function openLive(tableId) {
 
   } catch (e) {
     console.error(e);
-    alert('Failed to load session');
+    showError('Failed to load session');
   }
 }
 
@@ -824,7 +872,7 @@ function openAddOrder(playerNum) {
   }
 
 
-  
+
   openModal('order-modal');
 }
 
@@ -835,7 +883,7 @@ async function saveOrder() {
   const qty = parseInt(document.getElementById('order-qty').value) || 1;
 
   if (!inventoryId) {
-    alert('Please select an item');
+    showError('Please select an item');
     return;
   }
 
@@ -859,11 +907,11 @@ async function saveOrder() {
       await openLive(currentTableId);
     } else {
       const err = await res.json();
-      alert(err.message || 'Failed to add item');
+      showError(err.message || 'Failed to add item');
     }
   } catch (e) {
     console.error(e);
-    alert('Network error');
+    showError('Network error');
   }
 }
 
@@ -886,7 +934,7 @@ async function confirmEndGame() {
   const loserId = document.getElementById('loser-select').value;
 
   if (!loserId) {
-    alert('Please select who lost');
+    showError('Please select who lost');
     return;
   }
 
@@ -913,17 +961,17 @@ async function confirmEndGame() {
       finalSession.players.forEach(p => {
         summary += `${p.player_name}: ${money(p.total_amount)}\n`;
       });
-      alert(summary);
+      showSuccess('Game Ended!\n' + summary);
 
       await loadData();
       switchView('tables');
     } else {
       const err = await res.json();
-      alert(err.message || 'Failed to end game');
+      showError(err.message || 'Failed to end game');
     }
   } catch (e) {
     console.error(e);
-    alert('Network error');
+    showError('Network error');
   }
 }
 
@@ -939,3 +987,209 @@ function timeToMinutes(timeStr) {
   }
   return '';
 }
+/* ================= BILLING HISTORY ================= */
+
+let billingPage = 1;
+
+async function loadBilling(page = 1) {
+  billingPage = page;
+  const search = document.getElementById('billing-search')?.value || '';
+  const status = document.getElementById('billing-status-filter')?.value || '';
+
+  try {
+    const params = new URLSearchParams({
+      page: page,
+      search: search,
+      payment_status: status
+    });
+
+    const res = await fetch(`/cueboard/api/billing?${params}`);
+    const data = await res.json();
+
+    renderBilling(data);
+  } catch (e) {
+    console.error(e);
+    showError('Failed to load billing history');
+  }
+}
+
+function renderBilling(data) {
+  const tbody = document.getElementById('billing-body');
+  const pagination = document.getElementById('billing-pagination');
+  if (!tbody) return;
+
+  // Safety check
+ if (!data || !data.data) {
+  tbody.innerHTML = `
+    <tr>
+      <td colspan="7" style="text-align:center; padding:40px; color:#888;">
+        No bills found.
+      </td>
+    </tr>`;
+  if (pagination) pagination.innerHTML = '';
+  return;
+}
+
+  const bills = data.data;   // ← YE LINE MISSING THI
+
+  tbody.innerHTML = bills.map(b => {
+    const tableName = b.table?.name || '—';
+    const gameName = b.game_type?.game_name || '—';
+    const players = (b.players || []).map(p => p.player_name).join(' vs ');
+    const total = (b.players || []).reduce((sum, p) => sum + (p.total_amount || 0), 0);
+    const statusBadge = b.payment_status === 'paid'
+      ? `<span class="badge ok">Paid</span>`
+      : `<span class="badge out">Unpaid</span>`;
+    const closedAt = b.end_time
+      ? new Date(b.end_time).toLocaleString()
+      : '—';
+
+    return `
+      <tr>
+        <td><strong>${tableName}</strong></td>
+        <td>${gameName}</td>
+        <td>${players}</td>
+        <td><b>${money(total)}</b></td>
+        <td>${statusBadge}</td>
+        <td>${closedAt}</td>
+        <td>
+          <button class="btn btn-sm btn-outline" onclick="viewBill(${b.id})">View</button>
+          ${b.payment_status !== 'paid'
+        ? `<button class="btn btn-sm btn-primary" onclick="markPaid(${b.id})">Mark Paid</button>`
+        : ''}
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  // Pagination
+  if (pagination) {
+    let html = '';
+    if (data.prev_page_url) {
+      html += `<button class="btn btn-outline btn-sm" onclick="loadBilling(${data.current_page - 1})">← Prev</button>`;
+    }
+    html += `<span style="padding:8px 12px; color:var(--text-dim);">Page ${data.current_page} of ${data.last_page}</span>`;
+    if (data.next_page_url) {
+      html += `<button class="btn btn-outline btn-sm" onclick="loadBilling(${data.current_page + 1})">Next →</button>`;
+    }
+    pagination.innerHTML = html;
+  }
+}
+
+async function viewBill(id) {
+  try {
+    const res = await fetch(`/cueboard/api/billing/${id}`);
+    if (!res.ok) {
+      showError('Failed to load bill');
+      return;
+    }
+    const bill = await res.json();
+
+    const tableName = bill.table?.name || 'Table';
+    const gameName = bill.game_type?.game_name || 'Game';
+    const players = bill.players || [];
+
+    let playersHtml = players.map(p => {
+      const orders = (p.orders || []).map(o =>
+        `<div class="rline"><span>${o.inventory?.item_name || 'Item'} × ${o.quantity}</span><span>${money(o.total)}</span></div>`
+      ).join('') || '<div class="rline"><span>No items</span><span>—</span></div>';
+
+      const isLoser = p.id == bill.loser_player_id;
+      const gameCharge = isLoser
+        ? `<div class="rline"><span>Game Price (Lost)</span><span>${money(bill.game_price)}</span></div>`
+        : '';
+
+      return `
+        <div style="margin-bottom:16px;">
+          <h4 style="margin-bottom:8px; color:var(--brass);">${p.player_name} ${isLoser ? '(Lost)' : ''}</h4>
+          ${orders}
+          ${gameCharge}
+          <div class="rline total"><span>Subtotal</span><span>${money(p.total_amount)}</span></div>
+        </div>
+      `;
+    }).join('');
+
+    const grandTotal = players.reduce((sum, p) => sum + (p.total_amount || 0), 0);
+
+    document.getElementById('bill-detail-content').innerHTML = `
+  <div class="receipt" style="max-width:100%; margin:0; box-shadow:none; border:none; padding:0;">
+    <h3 style="text-align:center;">${tableName} — ${gameName}</h3>
+    <div class="rsub" style="text-align:center; margin-bottom:16px;">
+      ${bill.start_time ? new Date(bill.start_time).toLocaleString() : ''} → 
+      ${bill.end_time ? new Date(bill.end_time).toLocaleString() : ''}<br>
+      Status: <b id="bill-status-text">${bill.payment_status === 'paid' ? 'PAID' : 'UNPAID'}</b>
+    </div>
+    ${playersHtml}
+    <div class="rline total" style="margin-top:12px; font-size:18px;">
+      <span>Grand Total</span><span>${money(grandTotal)}</span>
+    </div>
+  </div>
+`;
+
+    // Buttons update
+    const actions = document.querySelector('#bill-detail-modal .modal-actions');
+    actions.innerHTML = `
+  <button class="btn btn-outline" style="flex:1" onclick="closeModal('bill-detail-modal')">Close</button>
+  <button class="btn btn-primary" style="flex:1" onclick="window.print()">Print</button>
+  ${bill.payment_status === 'paid'
+        ? `<button class="btn btn-outline" style="flex:1" onclick="markUnpaid(${bill.id}); closeModal('bill-detail-modal');">Mark Unpaid</button>`
+        : `<button class="btn btn-primary" style="flex:1" onclick="markPaid(${bill.id}); closeModal('bill-detail-modal');">Mark Paid</button>`
+      }
+`;
+
+    openModal('bill-detail-modal');
+  } catch (e) {
+    console.error(e);
+    showError('Failed to load bill details');
+  }
+}
+
+async function markPaid(id) {
+  // if (!confirm('Mark this bill as Paid?')) return;
+  const result = await showConfirm('Mark this bill as Paid?');
+  if (!result.isConfirmed) return;
+
+  try {
+    const res = await fetch(`/cueboard/api/billing/${id}/pay`, {
+      method: 'POST',
+      headers: {
+        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+      }
+    });
+
+    if (res.ok) {
+      loadBilling(billingPage);
+      showSuccess('Marked as Paid');
+    } else {
+      showError('Failed to update');
+    }
+  } catch (e) {
+    console.error(e);
+    showError('Network error');
+  }
+}
+
+async function markUnpaid(id) {
+  // if (!confirm('Mark this bill as Unpaid?')) return;
+  const result = await showConfirm('Mark this bill as Unpaid?');
+  if (!result.isConfirmed) return;
+
+  try {
+    const res = await fetch(`/cueboard/api/billing/${id}/unpay`, {
+      method: 'POST',
+      headers: {
+        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+      }
+    });
+
+    if (res.ok) {
+      loadBilling(billingPage);
+      showSuccess('Marked as Unpaid');
+    } else {
+      showError('Failed to update');
+    }
+  } catch (e) {
+    console.error(e);
+    showError('Network error');
+  }
+} 

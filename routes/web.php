@@ -36,6 +36,13 @@ Route::middleware('auth')->group(function () {
         Route::get('/api/active-session/{tableId}', [CueboardController::class, 'getActiveSession']);
         Route::post('/api/add-order', [CueboardController::class, 'addOrder']);
         Route::post('/api/end-game', [CueboardController::class, 'endGame']);
+
+
+        // Payment Status
+        Route::get('/api/billing', [CueboardController::class, 'getBillingHistory']);
+        Route::get('/api/billing/{id}', [CueboardController::class, 'getBillDetails']);
+        Route::post('/api/billing/{id}/pay', [CueboardController::class, 'markAsPaid']);
+        Route::post('/api/billing/{id}/unpay', [CueboardController::class, 'markAsUnpaid']);
     });
 });
 

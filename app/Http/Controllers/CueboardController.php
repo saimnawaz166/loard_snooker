@@ -11,6 +11,7 @@ use App\Models\PoolTable;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class CueboardController extends Controller
 {
@@ -279,5 +280,55 @@ class CueboardController extends Controller
             DB::rollBack();
             return response()->json(['message' => 'Failed to end game'], 500);
         }
+    }
+
+
+    // Billing History (with pagination + search)
+    public function getBillingHistory(Request $request)
+    {
+        $query = PoolGameSession::with(['players', 'gameType', 'table', 'loser'])
+            ->where('status', 'completed')
+            ->orderBy('end_time', 'desc');
+
+        // Search
+        if ($search = $request->get('search')) {
+            $query->where(function ($q) use ($search) {
+                $q->whereHas('table', fn($t) => $t->where('name', 'like', "%{$search}%"))
+                    ->orWhereHas('players', fn($p) => $p->where('player_name', 'like', "%{$search}%"))
+                    ->orWhereHas('gameType', fn($g) => $g->where('game_name', 'like', "%{$search}%"));
+            });
+        }
+
+        // Filter by payment status
+        if ($status = $request->get('payment_status')) {
+            $query->where('payment_status', $status);
+        }
+
+        $bills = $query->paginate(10);
+
+        return response()->json($bills);
+    }
+
+    // Single bill details
+    public function getBillDetails($id)
+    {
+        $session = PoolGameSession::with(['players.orders.inventory', 'gameType', 'table', 'loser'])
+            ->findOrFail($id);
+
+        return response()->json($session);
+    }
+
+    // Mark as Paid
+    public function markAsPaid($id)
+    {
+        $session = PoolGameSession::findOrFail($id);
+        $session->update(['payment_status' => 'paid']);
+        return response()->json($session);
+    }
+    public function markAsUnpaid($id)
+    {
+        $session = PoolGameSession::findOrFail($id);
+        $session->update(['payment_status' => 'unpaid']);
+        return response()->json($session);
     }
 }

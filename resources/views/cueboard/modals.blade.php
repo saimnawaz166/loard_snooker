@@ -155,3 +155,16 @@
     </div>
   </div>
 </div>
+
+
+<!-- ================= BILL DETAILS MODAL ================= -->
+<div class="modal-backdrop" id="bill-detail-modal">
+  <div class="modal" style="width:520px; max-height:90vh; overflow-y:auto;">
+    <h3>Bill Details</h3>
+    <div id="bill-detail-content"></div>
+    <div class="modal-actions" style="margin-top:16px;">
+      <button class="btn btn-outline" style="flex:1" onclick="closeModal('bill-detail-modal')">Close</button>
+      <button class="btn btn-primary" style="flex:1" onclick="window.print()">Print</button>
+    </div>
+  </div>
+</div>
