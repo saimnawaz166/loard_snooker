@@ -823,6 +823,8 @@ function openAddOrder(playerNum) {
     });
   }
 
+
+  
   openModal('order-modal');
 }
 
