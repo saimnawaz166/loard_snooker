@@ -30,6 +30,7 @@
           <div id="dash-stock-alerts"></div>
         </div>
       </div>
+      
     </section>
        @include('cueboard.tables')
     @include('cueboard.stock')
