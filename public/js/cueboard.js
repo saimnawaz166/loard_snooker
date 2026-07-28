@@ -89,34 +89,60 @@ async function loadData() {
 }
 
 /* RENDER FUNCTIONS */
-function renderDashboard() {
-  // Tables Running
-  const activeCount = tables.filter(t => t.status == 1 || t.status === 'active').length;
-  document.getElementById('stat-active').textContent = activeCount;
+async function renderDashboard() {
+  try {
+    const res = await fetch('/cueboard/api/dashboard-stats');
+    const data = await res.json();
 
-  // Low Stock
-  const lowStockCount = stock.filter(s => s.quantity < 10).length;
-  document.getElementById('stat-low').textContent = lowStockCount;
+    // Stats
+    document.getElementById('stat-active').textContent = data.tables_running || 0;
+    document.getElementById('stat-games').textContent = data.frames_today || 0;
+    document.getElementById('stat-rev').textContent = money(data.revenue_today || 0);
+    document.getElementById('stat-low').textContent = data.low_stock_count || 0;
 
-  // Mini Floor Snapshot
-  const miniGrid = document.getElementById('mini-table-grid');
-  if (miniGrid) {
-    miniGrid.innerHTML = tables.map(t => `
-      <div class="table-card ${t.status == 0 ? 'idle' : ''}">
-        <div class="felt-top">
-          <span class="tname">${t.name}</span>
-          <span class="status-dot ${t.status == 1 ? 'live' : 'idle'}">
-            <span class="dot"></span>${t.status == 1 ? 'Live' : 'Free'}
-          </span>
+    // Nav badge
+    const badge = document.getElementById('nav-lowstock');
+    if (badge) badge.textContent = data.low_stock_count || 0;
+
+    // Floor Snapshot (mini tables)
+    const miniGrid = document.getElementById('mini-table-grid');
+    if (miniGrid) {
+      miniGrid.innerHTML = tables.map(t => `
+        <div class="table-card ${t.status == 0 ? 'idle' : ''}">
+          <div class="felt-top">
+            <span class="tname">${t.name}</span>
+            <span class="status-dot ${t.status == 1 ? 'live' : 'idle'}">
+              <span class="dot"></span>${t.status == 1 ? 'Live' : 'Free'}
+            </span>
+          </div>
+          <div class="body">
+            <div class="sub-row"><span>Status</span><b>${t.status == 1 ? 'Running' : 'Available'}</b></div>
+          </div>
         </div>
-        <div class="body">
-          <div class="sub-row"><span>Status</span><b>${t.status == 1 ? 'Running' : 'Available'}</b></div>
-        </div>
-      </div>
-    `).join('');
+      `).join('');
+    }
+
+    // Stock Alerts
+    const alertsBox = document.getElementById('dash-stock-alerts');
+    if (alertsBox) {
+      const items = data.low_stock_items || [];
+      if (items.length === 0) {
+        alertsBox.innerHTML = `<div style="color:#888; padding:12px;">All stock levels are healthy.</div>`;
+      } else {
+        alertsBox.innerHTML = items.map(item => `
+          <div class="alert-row" style="display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--border);">
+            <span><strong>${item.item_name}</strong></span>
+            <span class="badge ${item.quantity <= 0 ? 'out' : 'low'}">
+              ${item.quantity <= 0 ? 'Out of Stock' : item.quantity + ' left'}
+            </span>
+          </div>
+        `).join('');
+      }
+    }
+  } catch (e) {
+    console.error('Dashboard stats failed', e);
   }
 }
-
 function renderTables() {
   const grid = document.getElementById('table-grid');
   if (!grid) return;
@@ -264,7 +290,7 @@ async function deleteStock(id) {
       stock = stock.filter(s => s.id !== id);
       renderStock();
       showSuccess('Item deleted successfully')
-            // alert('Item deleted successfully');
+      // alert('Item deleted successfully');
     } else {
       showError('Failed to delete item');
     }
@@ -308,33 +334,27 @@ async function adjustStock(id, delta) {
 
 /* Navigation */
 function switchView(view) {
-  // Hide all views
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
 
-  // Show selected view
   const activeView = document.getElementById('view-' + view);
-  if (activeView) {
-    activeView.classList.add('active');
-  }
-  if (view === 'settings') renderSettings();
+  if (activeView) activeView.classList.add('active');
 
-
-  // Update active button
+  // Nav active pehle
   document.querySelectorAll('nav.side-nav button').forEach(b => b.classList.remove('active'));
   const navBtn = document.querySelector(`nav.side-nav button[data-view="${view}"]`);
   if (navBtn) navBtn.classList.add('active');
 
-  // Update breadcrumb
-  document.getElementById('breadcrumb').textContent = view.charAt(0).toUpperCase() + view.slice(1);
+  // Breadcrumb
+  const breadcrumb = document.getElementById('breadcrumb');
+  if (breadcrumb) breadcrumb.textContent = view.charAt(0).toUpperCase() + view.slice(1);
 
-  // Force render based on view
+  // Render functions baad mein
   if (view === 'dashboard') renderDashboard();
-  if (view === 'tables') {
-    console.log("Rendering Tables...");
-    renderTables();
-  }
+  if (view === 'tables') renderTables();
   if (view === 'stock') renderStock();
   if (view === 'billing') loadBilling(1);
+  if (view === 'reports') renderReports();
+  if (view === 'settings') renderSettings();
 }
 
 /* INIT */
@@ -495,7 +515,6 @@ function renderSettings() {
         <td colspan="6" style="text-align:center; padding:30px; color:#888;">
           No game types found. Click "+ Add Game Type"
         </td>
-        <td>${g.time ? timeToMinutes(g.time) + ' min' : '—'}</td>
       </tr>`;
     return;
   }
@@ -508,7 +527,7 @@ function renderSettings() {
       <tr>
         <td><strong>${tableName}</strong></td>
         <td>${g.game_name}</td>
-        <td>${g.time ? g.time + ' min' : '—'}</td>
+        <td>${g.time ? timeToMinutes(g.time) + ' min' : '—'}</td>
         <td>${money(g.price)}</td>
         <td>
           <span class="badge ${g.status == 1 ? 'ok' : 'out'}">
@@ -523,7 +542,6 @@ function renderSettings() {
     `;
   }).join('');
 }
-
 function openAddGameType() {
   document.getElementById('game-type-title').textContent = 'Add Game Type';
   document.getElementById('gt-id').value = '';
@@ -1019,16 +1037,16 @@ function renderBilling(data) {
   if (!tbody) return;
 
   // Safety check
- if (!data || !data.data) {
-  tbody.innerHTML = `
+  if (!data || !data.data) {
+    tbody.innerHTML = `
     <tr>
       <td colspan="7" style="text-align:center; padding:40px; color:#888;">
         No bills found.
       </td>
     </tr>`;
-  if (pagination) pagination.innerHTML = '';
-  return;
-}
+    if (pagination) pagination.innerHTML = '';
+    return;
+  }
 
   const bills = data.data;   // ← YE LINE MISSING THI
 
@@ -1193,3 +1211,44 @@ async function markUnpaid(id) {
     showError('Network error');
   }
 } 
+/* ================= REPORTS ================= */
+async function renderReports() {
+  try {
+    const res = await fetch('/cueboard/api/reports');
+    if (!res.ok) {
+      console.error('Reports API failed');
+      return;
+    }
+    const data = await res.json();
+
+    const el = (id) => document.getElementById(id);
+
+    if (el('rep-rev-today')) el('rep-rev-today').textContent = money(data.revenue_today || 0);
+    if (el('rep-rev-week')) el('rep-rev-week').textContent = money(data.revenue_week || 0);
+    if (el('rep-most-played')) el('rep-most-played').textContent = data.most_played || '—';
+    if (el('rep-busiest')) el('rep-busiest').textContent = data.busiest_table || '—';
+
+    const bestBox = el('rep-best-selling');
+    if (bestBox) {
+      const items = data.best_selling || [];
+      bestBox.innerHTML = items.length === 0
+        ? `<div style="color:#888; padding:12px;">No sales data yet.</div>`
+        : items.map(item => `
+            <div class="order-row">
+              <span>${item.name}</span>
+              <b>${item.sold} sold</b>
+            </div>
+          `).join('');
+    }
+
+    const splitBox = el('rep-revenue-split');
+    if (splitBox) {
+      splitBox.innerHTML = `
+        <div class="order-row"><span>Table / Game</span><b>${money(data.game_revenue || 0)}</b></div>
+        <div class="order-row"><span>Snacks & drinks</span><b>${money(data.snacks_revenue || 0)}</b></div>
+      `;
+    }
+  } catch (e) {
+    console.error('Reports failed', e);
+  }
+}

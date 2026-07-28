@@ -43,6 +43,10 @@ Route::middleware('auth')->group(function () {
         Route::get('/api/billing/{id}', [CueboardController::class, 'getBillDetails']);
         Route::post('/api/billing/{id}/pay', [CueboardController::class, 'markAsPaid']);
         Route::post('/api/billing/{id}/unpay', [CueboardController::class, 'markAsUnpaid']);
+
+
+        Route::get('/api/dashboard-stats', [CueboardController::class, 'getDashboardStats']);
+        Route::get('/api/reports', [CueboardController::class, 'getReports']);
     });
 });
 

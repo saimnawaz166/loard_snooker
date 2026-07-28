@@ -144,8 +144,8 @@
     <div class="brand">
       <div class="ball"></div>
       <div>
-        <h1>CUE<span>BOARD</span></h1>
-        <div class="tag">Club Manager</div>
+        <h1>Loard<span> Arena</span></h1>
+        <div class="tag"></div>
       </div>
     </div>
 

@@ -339,4 +339,104 @@ class CueboardController extends Controller
             'user' => auth()->user()
         ]);
     }
+    public function getDashboardStats()
+    {
+        $today = Carbon::today();
+
+        // Tables Running
+        $tablesRunning = PoolTable::where('status', 1)->count();
+
+        // Frames Today (completed sessions today)
+        $framesToday = PoolGameSession::where('status', 'completed')
+            ->whereDate('end_time', $today)
+            ->count();
+
+        // Revenue Today (sum of all player totals from completed sessions today)
+        $revenueToday = PoolGameSessionPlayer::whereHas('session', function ($q) use ($today) {
+            $q->where('status', 'completed')
+                ->whereDate('end_time', $today);
+        })
+            ->sum('total_amount');
+
+        // Low Stock Items
+        $lowStock = Inventory::where('quantity', '<', 10)
+            ->orderBy('quantity')
+            ->get();
+
+        return response()->json([
+            'tables_running' => $tablesRunning,
+            'frames_today'   => $framesToday,
+            'revenue_today'  => $revenueToday,
+            'low_stock_count' => $lowStock->count(),
+            'low_stock_items' => $lowStock,
+        ]);
+    }
+    public function getReports()
+    {
+        $today = Carbon::today();
+        $weekStart = Carbon::now()->startOfWeek();
+
+        // Revenue Today
+        $revenueToday = PoolGameSessionPlayer::whereHas('session', function ($q) use ($today) {
+            $q->where('status', 'completed')->whereDate('end_time', $today);
+        })->sum('total_amount');
+
+        // Revenue This Week
+        $revenueWeek = PoolGameSessionPlayer::whereHas('session', function ($q) use ($weekStart) {
+            $q->where('status', 'completed')->where('end_time', '>=', $weekStart);
+        })->sum('total_amount');
+
+        // Most Played Game
+        $mostPlayed = PoolGameSession::where('status', 'completed')
+            ->select('pool_game_type_id', DB::raw('count(*) as total'))
+            ->groupBy('pool_game_type_id')
+            ->orderByDesc('total')
+            ->with('gameType')
+            ->first();
+
+        $mostPlayedName = $mostPlayed?->gameType?->game_name ?? '—';
+
+        // Busiest Table
+        $busiest = PoolGameSession::where('status', 'completed')
+            ->select('pool_table_id', DB::raw('count(*) as total'))
+            ->groupBy('pool_table_id')
+            ->orderByDesc('total')
+            ->with('table')
+            ->first();
+
+        $busiestTable = $busiest?->table?->name ?? '—';
+
+        // Best Selling Snacks (top 5)
+        $bestSelling = PoolGameSessionOrder::select(
+            'inventory_id',
+            DB::raw('SUM(quantity) as total_sold')
+        )
+            ->groupBy('inventory_id')
+            ->orderByDesc('total_sold')
+            ->with('inventory')
+            ->limit(5)
+            ->get()
+            ->map(function ($row) {
+                return [
+                    'name'  => $row->inventory?->item_name ?? 'Unknown',
+                    'sold'  => (int) $row->total_sold,
+                ];
+            });
+
+        // Revenue Split: Game Price vs Snacks
+        $gameRevenue = PoolGameSession::where('status', 'completed')
+            ->sum('game_price');
+
+        $snacksRevenue = PoolGameSessionOrder::sum('total');
+
+        return response()->json([
+            'revenue_today'   => (int) $revenueToday,
+            'revenue_week'    => (int) $revenueWeek,
+            'most_played'     => $mostPlayedName,
+            'busiest_table'   => $busiestTable,
+            'best_selling'    => $bestSelling,
+            'game_revenue'    => (int) $gameRevenue,
+            'snacks_revenue'  => (int) $snacksRevenue,
+        ]);
+    }
 }
