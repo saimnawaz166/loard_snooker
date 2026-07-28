@@ -79,6 +79,8 @@ async function loadData() {
     console.log("Data Loaded:", { tables, stock, activeSessions });
 
     await loadGameTypes();
+    await loadCategories();
+    await loadExpenses();
 
     renderDashboard();
     renderTables();
@@ -227,10 +229,12 @@ function renderStock() {
   tbody.innerHTML = stock.map(item => {
     const status = item.quantity <= 0 ? 'out' : (item.quantity < 10 ? 'low' : 'ok');
     const statusText = item.quantity <= 0 ? 'Out of Stock' : (item.quantity < 10 ? 'Low Stock' : 'In Stock');
+    const catName = item.category?.name || '—';
 
     return `
       <tr>
         <td><strong>${item.item_name}</strong></td>
+        <td>${catName}</td>
         <td>${item.description || '—'}</td>
         <td>${money(item.price)}</td>
         <td>${item.quantity} units</td>
@@ -250,13 +254,11 @@ function editStock(id) {
   const item = stock.find(s => s.id === id);
   if (!item) return;
 
-  // Modal open for edit
   document.getElementById('ns-name').value = item.item_name;
   document.getElementById('ns-price').value = item.price;
   document.getElementById('ns-stock').value = item.quantity;
   document.getElementById('ns-desc').value = item.description || '';
 
-  // Hidden id for update
   let hidden = document.getElementById('ns-id');
   if (!hidden) {
     hidden = document.createElement('input');
@@ -266,7 +268,8 @@ function editStock(id) {
   }
   hidden.value = item.id;
 
-  // Change button text
+  fillCategorySelect(item.category_id);
+
   const saveBtn = document.querySelector('#stock-modal .btn-primary');
   if (saveBtn) saveBtn.textContent = 'Update Item';
 
@@ -355,6 +358,8 @@ function switchView(view) {
   if (view === 'billing') loadBilling(1);
   if (view === 'reports') renderReports();
   if (view === 'settings') renderSettings();
+  if (view === 'categories') renderCategories();
+  if (view === 'expenses') renderExpenses();
 }
 
 /* INIT */
@@ -426,11 +431,17 @@ function openAddStock() {
   const price = document.getElementById('ns-price');
   const qty = document.getElementById('ns-stock');
   const desc = document.getElementById('ns-desc');
+  const hidden = document.getElementById('ns-id');
 
   if (name) name.value = '';
   if (price) price.value = '';
   if (qty) qty.value = '';
   if (desc) desc.value = '';
+  if (hidden) hidden.value = '';
+  fillCategorySelect();
+
+  const saveBtn = document.querySelector('#stock-modal .btn-primary');
+  if (saveBtn) saveBtn.textContent = 'Add Item';
 
   openModal('stock-modal');
 }
@@ -440,10 +451,15 @@ async function addStockItem() {
   const price = parseInt(document.getElementById('ns-price').value) || 0;
   const quantity = parseInt(document.getElementById('ns-stock').value) || 0;
   const description = document.getElementById('ns-desc').value.trim();
+  const categoryId = document.getElementById('ns-category')?.value || null;
   const id = document.getElementById('ns-id')?.value || null;
 
   if (!name) {
     showError('Please enter Item Name');
+    return;
+  }
+  if (!categoryId) {
+    showError('Please select a Category');
     return;
   }
 
@@ -451,13 +467,13 @@ async function addStockItem() {
     item_name: name,
     price: price,
     quantity: quantity,
-    description: description
+    description: description,
+    category_id: categoryId || null
   };
 
   try {
     let res;
     if (id) {
-      // Update
       res = await fetch(`/cueboard/api/stock/${id}`, {
         method: 'PUT',
         headers: {
@@ -467,7 +483,6 @@ async function addStockItem() {
         body: JSON.stringify(payload)
       });
     } else {
-      // Create
       res = await fetch('/cueboard/api/stock', {
         method: 'POST',
         headers: {
@@ -480,7 +495,7 @@ async function addStockItem() {
 
     if (res.ok) {
       closeModal('stock-modal');
-      await loadData(); // refresh
+      await loadData();
       showSuccess(id ? 'Item updated!' : 'Item added!');
     } else {
       showError('Failed to save item');
@@ -861,37 +876,86 @@ function openAddOrder(playerNum) {
   document.getElementById('order-player-id').value = player.id;
   document.getElementById('order-session-id').value = currentSession.id;
   document.getElementById('order-item-id').value = '';
+  document.getElementById('order-category-id').value = '';
   document.getElementById('order-qty').value = 1;
 
-  const grid = document.getElementById('order-item-grid');
+  // Reset to step 1
+  document.getElementById('order-step-category').style.display = 'block';
+  document.getElementById('order-step-items').style.display = 'none';
+  document.getElementById('order-add-btn').style.display = 'none';
+  document.getElementById('order-modal-sub').textContent = 'Select a category first.';
+
+  // Fill categories
+  const grid = document.getElementById('order-category-grid');
   grid.innerHTML = '';
 
-  const available = stock.filter(s => s.quantity > 0);
+  const activeCats = categories.filter(c => c.status == 1);
 
-  if (available.length === 0) {
-    grid.innerHTML = `<div style="grid-column:1/-1; text-align:center; color:#888; padding:20px;">No items in stock</div>`;
+  if (activeCats.length === 0) {
+    grid.innerHTML = `<div style="grid-column:1/-1; text-align:center; color:#888; padding:20px;">No categories found</div>`;
   } else {
-    available.forEach(item => {
+    activeCats.forEach(cat => {
+      const count = stock.filter(s => s.category_id == cat.id && s.quantity > 0).length;
       const div = document.createElement('div');
       div.className = 'item-btn';
-      div.dataset.id = item.id;
       div.innerHTML = `
-        <div class="emoji">🧾</div>
-        <div class="iname">${item.item_name}</div>
-        <div class="iprice">${money(item.price)} • ${item.quantity} left</div>
+        <div class="emoji">🏷</div>
+        <div class="iname">${cat.name}</div>
+        <div class="iprice">${count} items available</div>
       `;
-      div.onclick = () => {
-        document.querySelectorAll('#order-item-grid .item-btn').forEach(b => b.classList.remove('selected'));
-        div.classList.add('selected');
-        document.getElementById('order-item-id').value = item.id;
-      };
+      div.onclick = () => selectOrderCategory(cat.id, cat.name);
       grid.appendChild(div);
     });
   }
 
-
-
   openModal('order-modal');
+}
+function selectOrderCategory(catId, catName) {
+  document.getElementById('order-category-id').value = catId;
+  document.getElementById('order-item-id').value = '';
+
+  // Switch to step 2
+  document.getElementById('order-step-category').style.display = 'none';
+  document.getElementById('order-step-items').style.display = 'block';
+  document.getElementById('order-add-btn').style.display = 'none';
+  document.getElementById('order-modal-sub').textContent = `Category: ${catName} — Select an item`;
+
+  const grid = document.getElementById('order-item-grid');
+  grid.innerHTML = '';
+
+  const items = stock.filter(s => s.category_id == catId && s.quantity > 0);
+
+  if (items.length === 0) {
+    grid.innerHTML = `<div style="grid-column:1/-1; text-align:center; color:#888; padding:20px;">No items in this category</div>`;
+    return;
+  }
+
+  items.forEach(item => {
+    const div = document.createElement('div');
+    div.className = 'item-btn';
+    div.dataset.id = item.id;
+    div.innerHTML = `
+      <div class="emoji">🧾</div>
+      <div class="iname">${item.item_name}</div>
+      <div class="iprice">${money(item.price)} • ${item.quantity} left</div>
+    `;
+    div.onclick = () => {
+      document.querySelectorAll('#order-item-grid .item-btn').forEach(b => b.classList.remove('selected'));
+      div.classList.add('selected');
+      document.getElementById('order-item-id').value = item.id;
+      document.getElementById('order-add-btn').style.display = 'block';
+    };
+    grid.appendChild(div);
+  });
+}
+
+function backToCategories() {
+  document.getElementById('order-step-category').style.display = 'block';
+  document.getElementById('order-step-items').style.display = 'none';
+  document.getElementById('order-add-btn').style.display = 'none';
+  document.getElementById('order-item-id').value = '';
+  document.getElementById('order-category-id').value = '';
+  document.getElementById('order-modal-sub').textContent = 'Select a category first.';
 }
 
 async function saveOrder() {
@@ -940,16 +1004,35 @@ function openEndGame() {
 
   const select = document.getElementById('loser-select');
   select.innerHTML = '<option value="">-- Select Loser --</option>';
-
   currentSession.players.forEach(p => {
     select.innerHTML += `<option value="${p.id}">${p.player_name}</option>`;
   });
 
+  const discountInput = document.getElementById('end-discount');
+  discountInput.value = 0;
+  updateDiscountPreview();
+
+  discountInput.oninput = updateDiscountPreview;
+
   openModal('end-game-modal');
+}
+function updateDiscountPreview() {
+  if (!currentSession) return;
+  const discount = Math.min(100, Math.max(0, parseInt(document.getElementById('end-discount').value) || 0));
+  const gamePrice = currentSession.game_price || 0;
+  const finalPrice = Math.round(gamePrice * (100 - discount) / 100);
+
+  const el = document.getElementById('end-discount-preview');
+  if (el) {
+    el.textContent = discount > 0
+      ? `Game price: ${money(gamePrice)} → After ${discount}% off: ${money(finalPrice)}`
+      : `Game price: ${money(gamePrice)} (no discount)`;
+  }
 }
 
 async function confirmEndGame() {
   const loserId = document.getElementById('loser-select').value;
+  const discount = Math.min(100, Math.max(0, parseInt(document.getElementById('end-discount').value) || 0));
 
   if (!loserId) {
     showError('Please select who lost');
@@ -965,7 +1048,8 @@ async function confirmEndGame() {
       },
       body: JSON.stringify({
         session_id: currentSession.id,
-        loser_player_id: loserId
+        loser_player_id: loserId,
+        discount_percent: discount
       })
     });
 
@@ -974,12 +1058,14 @@ async function confirmEndGame() {
       closeModal('end-game-modal');
       if (timerInterval) clearInterval(timerInterval);
 
-      // Show final bill summary (simple alert for now)
       let summary = 'Game Ended!\n\n';
       finalSession.players.forEach(p => {
         summary += `${p.player_name}: ${money(p.total_amount)}\n`;
       });
-      showSuccess('Game Ended!\n' + summary);
+      if (discount > 0) {
+        summary += `\nDiscount: ${discount}% on game price`;
+      }
+      showSuccess(summary);
 
       await loadData();
       switchView('tables');
@@ -1113,9 +1199,22 @@ async function viewBill(id) {
       ).join('') || '<div class="rline"><span>No items</span><span>—</span></div>';
 
       const isLoser = p.id == bill.loser_player_id;
-      const gameCharge = isLoser
-        ? `<div class="rline"><span>Game Price (Lost)</span><span>${money(bill.game_price)}</span></div>`
-        : '';
+      let gameCharge = '';
+      if (isLoser) {
+        const original = bill.game_price || 0;
+        const discounted = bill.discounted_game_price ?? original;
+        const disc = bill.discount_percent || 0;
+
+        if (disc > 0) {
+          gameCharge = `
+      <div class="rline"><span>Game Price</span><span>${money(original)}</span></div>
+      <div class="rline"><span>Discount (${disc}%)</span><span>- ${money(original - discounted)}</span></div>
+      <div class="rline"><span>Game Price (After Discount)</span><span>${money(discounted)}</span></div>
+    `;
+        } else {
+          gameCharge = `<div class="rline"><span>Game Price (Lost)</span><span>${money(original)}</span></div>`;
+        }
+      }
 
       return `
         <div style="margin-bottom:16px;">
@@ -1210,45 +1309,498 @@ async function markUnpaid(id) {
     console.error(e);
     showError('Network error');
   }
-} 
+}
 /* ================= REPORTS ================= */
+let calYear = new Date().getFullYear();
+let calMonth = new Date().getMonth() + 1; // 1-12
+let calDaysData = {};
+
 async function renderReports() {
   try {
-    const res = await fetch('/cueboard/api/reports');
+    const params = new URLSearchParams({
+      cal_year: calYear,
+      cal_month: calMonth
+    });
+    const res = await fetch(`/cueboard/api/reports?${params}`);
+    if (!res.ok) return;
+    const data = await res.json();
+
+    const set = (id, val) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = money(val || 0);
+    };
+
+    set('rep-rev-day', data.revenue?.day);
+    set('rep-rev-week', data.revenue?.week);
+    set('rep-rev-month', data.revenue?.month);
+    set('rep-rev-year', data.revenue?.year);
+
+    set('rep-exp-day', data.expense?.day);
+    set('rep-exp-week', data.expense?.week);
+    set('rep-exp-month', data.expense?.month);
+    set('rep-exp-year', data.expense?.year);
+
+    set('rep-profit-day', data.profit?.day);
+    set('rep-profit-week', data.profit?.week);
+    set('rep-profit-month', data.profit?.month);
+    set('rep-profit-year', data.profit?.year);
+
+    // Best selling
+    const bestBox = document.getElementById('rep-best-selling');
+    if (bestBox) {
+      const items = data.best_selling || [];
+      bestBox.innerHTML = items.length
+        ? items.map(i => `<div class="order-row"><span>${i.name}</span><b>${i.sold} sold</b></div>`).join('')
+        : `<div style="color:#888;padding:12px;">No sales yet.</div>`;
+    }
+
+    // Low selling
+    const lowBox = document.getElementById('rep-low-selling');
+    if (lowBox) {
+      const items = data.low_selling || [];
+      lowBox.innerHTML = items.length
+        ? items.map(i => `<div class="order-row"><span>${i.name}</span><b>${i.sold} sold</b></div>`).join('')
+        : `<div style="color:#888;padding:12px;">No sales yet.</div>`;
+    }
+
+    // Revenue split
+    const splitBox = document.getElementById('rep-revenue-split');
+    if (splitBox && data.split) {
+      const rows = ['day', 'week', 'month', 'year'];
+      const labels = { day: 'Daily', week: 'Weekly', month: 'Monthly', year: 'Yearly' };
+      splitBox.innerHTML = rows.map(k => {
+        const g = data.split[k]?.game || 0;
+        const s = data.split[k]?.snacks || 0;
+        return `
+          <div style="margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid var(--border);">
+            <div style="font-size:12px; color:var(--brass); margin-bottom:6px; font-weight:600;">${labels[k]}</div>
+            <div class="order-row"><span>Table / Game</span><b>${money(g)}</b></div>
+            <div class="order-row"><span>Snacks & drinks</span><b>${money(s)}</b></div>
+            <div class="order-row"><span>Total</span><b>${money(g + s)}</b></div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // Calendar
+    if (data.calendar) {
+      calYear = data.calendar.year;
+      calMonth = data.calendar.month;
+      calDaysData = data.calendar.days || {};
+      renderCalendar();
+    }
+  } catch (e) {
+    console.error('Reports failed', e);
+  }
+}
+
+function renderCalendar() {
+  const box = document.getElementById('reports-calendar');
+  const label = document.getElementById('cal-month-label');
+  if (!box) return;
+
+  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  if (label) label.textContent = `${monthNames[calMonth - 1]} ${calYear}`;
+
+  const first = new Date(calYear, calMonth - 1, 1);
+  const startDay = first.getDay(); // 0 Sun
+  const daysInMonth = new Date(calYear, calMonth, 0).getDate();
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  let html = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
+    .map(d => `<div class="cal-head">${d}</div>`).join('');
+
+  for (let i = 0; i < startDay; i++) {
+    html += `<div class="cal-day empty"></div>`;
+  }
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${calYear}-${String(calMonth).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const info = calDaysData[dateStr] || {};
+    const rev = info.revenue || 0;
+    const has = rev > 0 || (info.expense || 0) > 0;
+    const isToday = dateStr === todayStr;
+
+    html += `
+      <div class="cal-day ${has ? 'has-data' : ''} ${isToday ? 'today' : ''}"
+           onclick="selectCalDay('${dateStr}', this)">
+        <span>${d}</span>
+        ${has ? `<span class="cal-amt">${money(rev)}</span>` : ''}
+      </div>
+    `;
+  }
+
+  box.innerHTML = html;
+  document.getElementById('cal-day-detail').style.display = 'none';
+}
+
+function calPrev() {
+  calMonth--;
+  if (calMonth < 1) { calMonth = 12; calYear--; }
+  renderReports();
+}
+
+function calNext() {
+  calMonth++;
+  if (calMonth > 12) { calMonth = 1; calYear++; }
+  renderReports();
+}
+
+async function selectCalDay(dateStr, el) {
+  document.querySelectorAll('.cal-day').forEach(d => d.classList.remove('selected'));
+  if (el) el.classList.add('selected');
+
+  const detail = document.getElementById('cal-day-detail');
+  if (!detail) return;
+
+  try {
+    const res = await fetch(`/cueboard/api/reports/day?date=${dateStr}`);
     if (!res.ok) {
-      console.error('Reports API failed');
+      detail.style.display = 'block';
+      detail.innerHTML = `<div style="color:#888;">Failed to load day report.</div>`;
       return;
     }
     const data = await res.json();
 
-    const el = (id) => document.getElementById(id);
+    const itemsHtml = (data.items || []).length
+      ? data.items.map(i => `<div class="order-row"><span>${i.name} × ${i.sold}</span><b>${money(i.amount)}</b></div>`).join('')
+      : `<div style="color:#888; font-size:13px;">No item sales</div>`;
 
-    if (el('rep-rev-today')) el('rep-rev-today').textContent = money(data.revenue_today || 0);
-    if (el('rep-rev-week')) el('rep-rev-week').textContent = money(data.revenue_week || 0);
-    if (el('rep-most-played')) el('rep-most-played').textContent = data.most_played || '—';
-    if (el('rep-busiest')) el('rep-busiest').textContent = data.busiest_table || '—';
+    const expHtml = (data.expense_list || []).length
+      ? data.expense_list.map(e => `<div class="order-row"><span>${e.title}</span><b>${money(e.amount)}</b></div>`).join('')
+      : `<div style="color:#888; font-size:13px;">No expenses</div>`;
 
-    const bestBox = el('rep-best-selling');
-    if (bestBox) {
-      const items = data.best_selling || [];
-      bestBox.innerHTML = items.length === 0
-        ? `<div style="color:#888; padding:12px;">No sales data yet.</div>`
-        : items.map(item => `
-            <div class="order-row">
-              <span>${item.name}</span>
-              <b>${item.sold} sold</b>
-            </div>
-          `).join('');
+    detail.style.display = 'block';
+    detail.innerHTML = `
+      <div style="border-top:1px solid var(--border); padding-top:16px;">
+        <h4 style="margin-bottom:12px;">Report — ${dateStr}</h4>
+        <div class="stat-strip" style="grid-template-columns:repeat(4,1fr); margin-bottom:16px;">
+          <div class="stat-card"><div class="num" style="font-size:18px;">${money(data.revenue)}</div><div class="lbl">Revenue</div></div>
+          <div class="stat-card warn"><div class="num" style="font-size:18px;">${money(data.expense)}</div><div class="lbl">Expense</div></div>
+          <div class="stat-card"><div class="num" style="font-size:18px;">${money(data.profit)}</div><div class="lbl">Profit</div></div>
+          <div class="stat-card"><div class="num" style="font-size:18px;">${data.frames || 0}</div><div class="lbl">Frames</div></div>
+        </div>
+        <div class="grid-2">
+          <div>
+            <div style="font-size:12px; color:var(--text-dim); margin-bottom:8px; text-transform:uppercase;">Items sold</div>
+            ${itemsHtml}
+          </div>
+          <div>
+            <div style="font-size:12px; color:var(--text-dim); margin-bottom:8px; text-transform:uppercase;">Expenses</div>
+            ${expHtml}
+          </div>
+        </div>
+      </div>
+    `;
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+
+
+/* ================= CATEGORIES ================= */
+let categories = [];
+
+async function loadCategories() {
+  try {
+    const res = await fetch('/cueboard/api/categories');
+    categories = await res.json();
+    renderCategories();
+  } catch (e) {
+    console.error('Failed to load categories', e);
+  }
+}
+
+function renderCategories() {
+  const tbody = document.getElementById('categories-body');
+  if (!tbody) return;
+
+  if (categories.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="3" style="text-align:center; padding:30px; color:#888;">
+          No categories found. Click "+ Add Category"
+        </td>
+      </tr>`;
+    return;
+  }
+
+  tbody.innerHTML = categories.map(c => `
+    <tr>
+      <td><strong>${c.name}</strong></td>
+      <td>
+        <span class="badge ${c.status == 1 ? 'ok' : 'out'}">
+          ${c.status == 1 ? 'Active' : 'Inactive'}
+        </span>
+      </td>
+      <td>
+        <button class="btn btn-sm btn-outline" onclick="editCategory(${c.id})">Edit</button>
+        <button class="btn btn-sm btn-danger" onclick="deleteCategory(${c.id})">Delete</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function openAddCategory() {
+  document.getElementById('cat-title').textContent = 'Add Category';
+  document.getElementById('cat-id').value = '';
+  document.getElementById('cat-name').value = '';
+  document.getElementById('cat-status').value = '1';
+  openModal('category-modal');
+}
+
+function editCategory(id) {
+  const cat = categories.find(c => c.id === id);
+  if (!cat) return;
+
+  document.getElementById('cat-title').textContent = 'Edit Category';
+  document.getElementById('cat-id').value = cat.id;
+  document.getElementById('cat-name').value = cat.name;
+  document.getElementById('cat-status').value = cat.status;
+  openModal('category-modal');
+}
+
+async function saveCategory() {
+  const id = document.getElementById('cat-id').value;
+  const name = document.getElementById('cat-name').value.trim();
+  const status = document.getElementById('cat-status').value;
+
+  if (!name) {
+    showError('Please enter Category Name');
+    return;
+  }
+
+  const payload = { name, status };
+
+  try {
+    let res;
+    if (id) {
+      res = await fetch(`/cueboard/api/categories/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+        },
+        body: JSON.stringify(payload)
+      });
+    } else {
+      res = await fetch('/cueboard/api/categories', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+        },
+        body: JSON.stringify(payload)
+      });
     }
 
-    const splitBox = el('rep-revenue-split');
-    if (splitBox) {
-      splitBox.innerHTML = `
-        <div class="order-row"><span>Table / Game</span><b>${money(data.game_revenue || 0)}</b></div>
-        <div class="order-row"><span>Snacks & drinks</span><b>${money(data.snacks_revenue || 0)}</b></div>
-      `;
+    if (res.ok) {
+      closeModal('category-modal');
+      await loadCategories();
+      showSuccess(id ? 'Category updated!' : 'Category added!');
+    } else {
+      showError('Failed to save category');
     }
   } catch (e) {
-    console.error('Reports failed', e);
+    console.error(e);
+    showError('Network error');
+  }
+}
+
+async function deleteCategory(id) {
+  const result = await showConfirm('Delete this category?');
+  if (!result.isConfirmed) return;
+
+  try {
+    const res = await fetch(`/cueboard/api/categories/${id}`, {
+      method: 'DELETE',
+      headers: {
+        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+      }
+    });
+
+    if (res.ok) {
+      await loadCategories();
+      showSuccess('Category deleted');
+    } else {
+      showError('Failed to delete');
+    }
+  } catch (e) {
+    console.error(e);
+    showError('Error deleting');
+  }
+}
+
+function fillCategorySelect(selectedId = '') {
+  const select = document.getElementById('ns-category');
+  if (!select) return;
+
+  select.innerHTML = '<option value="">-- Select Category --</option>';
+  categories
+    .filter(c => c.status == 1)
+    .forEach(c => {
+      const sel = c.id == selectedId ? 'selected' : '';
+      select.innerHTML += `<option value="${c.id}" ${sel}>${c.name}</option>`;
+    });
+}
+
+
+
+/* ================= EXPENSES ================= */
+let expenses = [];
+
+async function loadExpenses() {
+  try {
+    const res = await fetch('/cueboard/api/expenses');
+    expenses = await res.json();
+    renderExpenses();
+  } catch (e) {
+    console.error('Failed to load expenses', e);
+  }
+}
+
+function renderExpenses() {
+  const tbody = document.getElementById('expenses-body');
+  if (!tbody) return;
+
+  if (expenses.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="6" style="text-align:center; padding:30px; color:#888;">
+          No expenses found. Click "+ Add Expense"
+        </td>
+      </tr>`;
+    return;
+  }
+
+  tbody.innerHTML = expenses.map(e => {
+    const dateStr = e.expense_date
+      ? new Date(e.expense_date).toLocaleDateString()
+      : '—';
+
+    return `
+      <tr>
+        <td>${dateStr}</td>
+        <td><strong>${e.title}</strong></td>
+        <td>${e.category || '—'}</td>
+        <td><b>${money(e.amount)}</b></td>
+        <td>${e.description || '—'}</td>
+        <td>
+          <button class="btn btn-sm btn-outline" onclick="editExpense(${e.id})">Edit</button>
+          <button class="btn btn-sm btn-danger" onclick="deleteExpense(${e.id})">Delete</button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function openAddExpense() {
+  document.getElementById('exp-title').textContent = 'Add Expense';
+  document.getElementById('exp-id').value = '';
+  document.getElementById('exp-name').value = '';
+  document.getElementById('exp-amount').value = '';
+  document.getElementById('exp-category').value = '';
+  document.getElementById('exp-desc').value = '';
+  document.getElementById('exp-date').value = new Date().toISOString().slice(0, 10);
+  openModal('expense-modal');
+}
+
+function editExpense(id) {
+  const e = expenses.find(x => x.id === id);
+  if (!e) return;
+
+  document.getElementById('exp-title').textContent = 'Edit Expense';
+  document.getElementById('exp-id').value = e.id;
+  document.getElementById('exp-name').value = e.title;
+  document.getElementById('exp-amount').value = e.amount;
+  document.getElementById('exp-category').value = e.category || '';
+  document.getElementById('exp-desc').value = e.description || '';
+  document.getElementById('exp-date').value = e.expense_date
+    ? String(e.expense_date).slice(0, 10)
+    : '';
+
+  openModal('expense-modal');
+}
+
+async function saveExpense() {
+  const id = document.getElementById('exp-id').value;
+  const title = document.getElementById('exp-name').value.trim();
+  const amount = parseInt(document.getElementById('exp-amount').value) || 0;
+  const category = document.getElementById('exp-category').value;
+  const description = document.getElementById('exp-desc').value.trim();
+  const expense_date = document.getElementById('exp-date').value;
+
+  if (!title) {
+    showError('Please enter Title');
+    return;
+  }
+  if (amount < 1) {
+    showError('Please enter valid Amount');
+    return;
+  }
+  if (!expense_date) {
+    showError('Please select Date');
+    return;
+  }
+
+  const payload = { title, amount, category, description, expense_date };
+
+  try {
+    let res;
+    if (id) {
+      res = await fetch(`/cueboard/api/expenses/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+        },
+        body: JSON.stringify(payload)
+      });
+    } else {
+      res = await fetch('/cueboard/api/expenses', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+        },
+        body: JSON.stringify(payload)
+      });
+    }
+
+    if (res.ok) {
+      closeModal('expense-modal');
+      await loadExpenses();
+      showSuccess(id ? 'Expense updated!' : 'Expense added!');
+    } else {
+      showError('Failed to save expense');
+    }
+  } catch (e) {
+    console.error(e);
+    showError('Network error');
+  }
+}
+
+async function deleteExpense(id) {
+  const result = await showConfirm('Delete this expense?');
+  if (!result.isConfirmed) return;
+
+  try {
+    const res = await fetch(`/cueboard/api/expenses/${id}`, {
+      method: 'DELETE',
+      headers: {
+        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+      }
+    });
+
+    if (res.ok) {
+      await loadExpenses();
+      showSuccess('Expense deleted');
+    } else {
+      showError('Failed to delete');
+    }
+  } catch (e) {
+    console.error(e);
+    showError('Error deleting');
   }
 }

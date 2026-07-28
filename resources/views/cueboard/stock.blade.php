@@ -13,6 +13,7 @@
           <thead>
             <tr>
               <th>Item</th>
+              <th>Category</th>
               <th>Description</th>
               <th>Price</th>
               <th>In Stock</th>

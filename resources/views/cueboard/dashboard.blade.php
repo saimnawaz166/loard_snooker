@@ -40,4 +40,6 @@
     @include('cueboard.live')
     @include('cueboard.receipt')
     @include('cueboard.profile')
+    @include('cueboard.categories')
+    @include('cueboard.expenses')
 @endsection

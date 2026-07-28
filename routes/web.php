@@ -47,6 +47,20 @@ Route::middleware('auth')->group(function () {
 
         Route::get('/api/dashboard-stats', [CueboardController::class, 'getDashboardStats']);
         Route::get('/api/reports', [CueboardController::class, 'getReports']);
+        Route::get('/api/reports/day', [CueboardController::class, 'getReportByDate']);
+
+
+        Route::get('/api/categories', [CueboardController::class, 'getCategories']);
+        Route::post('/api/categories', [CueboardController::class, 'storeCategory']);
+        Route::put('/api/categories/{id}', [CueboardController::class, 'updateCategory']);
+        Route::delete('/api/categories/{id}', [CueboardController::class, 'deleteCategory']);
+
+
+
+        Route::get('/api/expenses', [CueboardController::class, 'getExpenses']);
+        Route::post('/api/expenses', [CueboardController::class, 'storeExpense']);
+        Route::put('/api/expenses/{id}', [CueboardController::class, 'updateExpense']);
+        Route::delete('/api/expenses/{id}', [CueboardController::class, 'deleteExpense']);
     });
 });
 

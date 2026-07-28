@@ -15,6 +15,8 @@ class PoolGameSession extends Model
         'loser_player_id',
         'game_price',
         'payment_status',
+        'discount_percent',
+        'discounted_game_price',
     ];
 
     protected $casts = [

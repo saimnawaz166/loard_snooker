@@ -2,7 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Expense;
 use App\Models\Inventory;
+use App\Models\InventoryCategory;
 use App\Models\PoolGameSession;
 use App\Models\PoolGameSessionOrder;
 use App\Models\PoolGameSessionPlayer;
@@ -32,7 +34,9 @@ class CueboardController extends Controller
     // API for Stock
     public function getStock()
     {
-        return response()->json(Inventory::orderBy('item_name')->get());
+        return response()->json(
+            Inventory::with('category')->orderBy('item_name')->get()
+        );
     }
 
     public function storeStock(Request $request)
@@ -42,6 +46,7 @@ class CueboardController extends Controller
             'price'       => 'required|integer|min:0',
             'quantity'    => 'required|integer|min:0',
             'description' => 'nullable|string|max:500',
+            'category_id' => 'required|exists:inventory_categories,id',
         ]);
 
         $item = Inventory::create($validated);
@@ -58,6 +63,7 @@ class CueboardController extends Controller
             'price'       => 'sometimes|integer|min:0',
             'quantity'    => 'sometimes|integer|min:0',
             'description' => 'nullable|string|max:500',
+            'category_id' => 'nullable|exists:inventory_categories,id',
         ]);
 
         $item->update($validated);
@@ -247,8 +253,9 @@ class CueboardController extends Controller
     public function endGame(Request $request)
     {
         $validated = $request->validate([
-            'session_id'      => 'required|exists:pool_game_sessions,id',
-            'loser_player_id' => 'required|exists:pool_game_session_players,id',
+            'session_id'        => 'required|exists:pool_game_sessions,id',
+            'loser_player_id'   => 'required|exists:pool_game_session_players,id',
+            'discount_percent'  => 'nullable|integer|min:0|max:100',
         ]);
 
         $session = PoolGameSession::with('players')->findOrFail($validated['session_id']);
@@ -257,20 +264,24 @@ class CueboardController extends Controller
             return response()->json(['message' => 'Session already completed'], 422);
         }
 
+        $discount = (int) ($validated['discount_percent'] ?? 0);
+        $gamePrice = (int) $session->game_price;
+        $discountedPrice = (int) round($gamePrice * (100 - $discount) / 100);
+
         DB::beginTransaction();
         try {
-            // Add game price to loser
+            // Add discounted game price to loser only
             $loser = PoolGameSessionPlayer::find($validated['loser_player_id']);
-            $loser->increment('total_amount', $session->game_price);
+            $loser->increment('total_amount', $discountedPrice);
 
-            // Update session
             $session->update([
-                'end_time'        => Carbon::now(),
-                'status'          => 'completed',
-                'loser_player_id' => $validated['loser_player_id'],
+                'end_time'              => Carbon::now(),
+                'status'                => 'completed',
+                'loser_player_id'       => $validated['loser_player_id'],
+                'discount_percent'      => $discount,
+                'discounted_game_price' => $discountedPrice,
             ]);
 
-            // Free the table
             PoolTable::where('id', $session->pool_table_id)->update(['status' => 0]);
 
             DB::commit();
@@ -280,7 +291,7 @@ class CueboardController extends Controller
             return response()->json($session);
         } catch (\Exception $e) {
             DB::rollBack();
-            return response()->json(['message' => 'Failed to end game'], 500);
+            return response()->json(['message' => 'Failed to end game', 'error' => $e->getMessage()], 500);
         }
     }
 
@@ -371,72 +382,281 @@ class CueboardController extends Controller
             'low_stock_items' => $lowStock,
         ]);
     }
-    public function getReports()
+    public function getReports(Request $request)
     {
-        $today = Carbon::today();
-        $weekStart = Carbon::now()->startOfWeek();
+        $now = Carbon::now();
+        $today = $now->copy()->startOfDay();
+        $weekStart = $now->copy()->startOfWeek();
+        $monthStart = $now->copy()->startOfMonth();
+        $yearStart = $now->copy()->startOfYear();
 
-        // Revenue Today
-        $revenueToday = PoolGameSessionPlayer::whereHas('session', function ($q) use ($today) {
-            $q->where('status', 'completed')->whereDate('end_time', $today);
-        })->sum('total_amount');
+        // Helper: player totals from completed sessions in range
+        $revenueBetween = function ($from, $to = null) {
+            $q = PoolGameSessionPlayer::whereHas('session', function ($s) use ($from, $to) {
+                $s->where('status', 'completed')
+                    ->where('end_time', '>=', $from);
+                if ($to) {
+                    $s->where('end_time', '<=', $to);
+                }
+            });
+            return (int) $q->sum('total_amount');
+        };
 
-        // Revenue This Week
-        $revenueWeek = PoolGameSessionPlayer::whereHas('session', function ($q) use ($weekStart) {
-            $q->where('status', 'completed')->where('end_time', '>=', $weekStart);
-        })->sum('total_amount');
+        $expenseBetween = function ($from, $to = null) {
+            $q = Expense::where('expense_date', '>=', $from->toDateString());
+            if ($to) {
+                $q->where('expense_date', '<=', $to->toDateString());
+            }
+            return (int) $q->sum('amount');
+        };
 
-        // Most Played Game
-        $mostPlayed = PoolGameSession::where('status', 'completed')
-            ->select('pool_game_type_id', DB::raw('count(*) as total'))
-            ->groupBy('pool_game_type_id')
-            ->orderByDesc('total')
-            ->with('gameType')
-            ->first();
+        $revDay   = $revenueBetween($today);
+        $revWeek  = $revenueBetween($weekStart);
+        $revMonth = $revenueBetween($monthStart);
+        $revYear  = $revenueBetween($yearStart);
 
-        $mostPlayedName = $mostPlayed?->gameType?->game_name ?? '—';
+        $expDay   = $expenseBetween($today);
+        $expWeek  = $expenseBetween($weekStart);
+        $expMonth = $expenseBetween($monthStart);
+        $expYear  = $expenseBetween($yearStart);
 
-        // Busiest Table
-        $busiest = PoolGameSession::where('status', 'completed')
-            ->select('pool_table_id', DB::raw('count(*) as total'))
-            ->groupBy('pool_table_id')
-            ->orderByDesc('total')
-            ->with('table')
-            ->first();
-
-        $busiestTable = $busiest?->table?->name ?? '—';
-
-        // Best Selling Snacks (top 5)
-        $bestSelling = PoolGameSessionOrder::select(
+        // Best / Low selling items
+        $itemSales = PoolGameSessionOrder::select(
             'inventory_id',
             DB::raw('SUM(quantity) as total_sold')
         )
             ->groupBy('inventory_id')
-            ->orderByDesc('total_sold')
             ->with('inventory')
-            ->limit(5)
             ->get()
-            ->map(function ($row) {
-                return [
-                    'name'  => $row->inventory?->item_name ?? 'Unknown',
-                    'sold'  => (int) $row->total_sold,
-                ];
+            ->map(fn($r) => [
+                'name' => $r->inventory?->item_name ?? 'Unknown',
+                'sold' => (int) $r->total_sold,
+            ])
+            ->sortByDesc('sold')
+            ->values();
+
+        $bestSelling = $itemSales->take(3)->values();
+        $lowSelling  = $itemSales->sortBy('sold')->take(3)->values();
+
+        // Revenue split helper (game_price sum vs orders sum) for period
+        $splitBetween = function ($from) {
+            $game = (int) PoolGameSession::where('status', 'completed')
+                ->where('end_time', '>=', $from)
+                ->sum(DB::raw('COALESCE(discounted_game_price, game_price)'));
+
+            $snacks = (int) PoolGameSessionOrder::whereHas('session', function ($s) use ($from) {
+                $s->where('status', 'completed')->where('end_time', '>=', $from);
+            })->sum('total');
+
+            // Fallback if discounted_game_price column missing:
+            // $game = (int) PoolGameSession::where(...)->sum('game_price');
+
+            return ['game' => $game, 'snacks' => $snacks];
+        };
+
+        // If discounted_game_price may not exist, safer:
+        $splitBetween = function ($from) {
+            $sessions = PoolGameSession::where('status', 'completed')
+                ->where('end_time', '>=', $from)
+                ->get();
+
+            $game = $sessions->sum(function ($s) {
+                return $s->discounted_game_price ?? $s->game_price ?? 0;
             });
 
-        // Revenue Split: Game Price vs Snacks
-        $gameRevenue = PoolGameSession::where('status', 'completed')
-            ->sum('game_price');
+            $snacks = (int) PoolGameSessionOrder::whereIn(
+                'pool_game_session_id',
+                $sessions->pluck('id')
+            )->sum('total');
 
-        $snacksRevenue = PoolGameSessionOrder::sum('total');
+            return ['game' => (int) $game, 'snacks' => $snacks];
+        };
+
+        // Calendar month data (optional query param)
+        $calYear  = (int) ($request->get('cal_year') ?: $now->year);
+        $calMonth = (int) ($request->get('cal_month') ?: $now->month);
+        $calStart = Carbon::create($calYear, $calMonth, 1)->startOfDay();
+        $calEnd   = $calStart->copy()->endOfMonth();
+
+        $dailyMap = [];
+        // Revenue per day
+        $sessions = PoolGameSession::with('players')
+            ->where('status', 'completed')
+            ->whereBetween('end_time', [$calStart, $calEnd])
+            ->get();
+
+        foreach ($sessions as $s) {
+            $d = Carbon::parse($s->end_time)->format('Y-m-d');
+            $sum = $s->players->sum('total_amount');
+            $dailyMap[$d]['revenue'] = ($dailyMap[$d]['revenue'] ?? 0) + $sum;
+        }
+
+        $exps = Expense::whereBetween('expense_date', [$calStart->toDateString(), $calEnd->toDateString()])->get();
+        foreach ($exps as $e) {
+            $d = Carbon::parse($e->expense_date)->format('Y-m-d');
+            $dailyMap[$d]['expense'] = ($dailyMap[$d]['expense'] ?? 0) + $e->amount;
+        }
 
         return response()->json([
-            'revenue_today'   => (int) $revenueToday,
-            'revenue_week'    => (int) $revenueWeek,
-            'most_played'     => $mostPlayedName,
-            'busiest_table'   => $busiestTable,
-            'best_selling'    => $bestSelling,
-            'game_revenue'    => (int) $gameRevenue,
-            'snacks_revenue'  => (int) $snacksRevenue,
+            'revenue' => [
+                'day' => $revDay,
+                'week' => $revWeek,
+                'month' => $revMonth,
+                'year' => $revYear,
+            ],
+            'expense' => [
+                'day' => $expDay,
+                'week' => $expWeek,
+                'month' => $expMonth,
+                'year' => $expYear,
+            ],
+            'profit' => [
+                'day' => $revDay - $expDay,
+                'week' => $revWeek - $expWeek,
+                'month' => $revMonth - $expMonth,
+                'year' => $revYear - $expYear,
+            ],
+            'best_selling' => $bestSelling,
+            'low_selling'  => $lowSelling,
+            'split' => [
+                'day'   => $splitBetween($today),
+                'week'  => $splitBetween($weekStart),
+                'month' => $splitBetween($monthStart),
+                'year'  => $splitBetween($yearStart),
+            ],
+            'calendar' => [
+                'year'  => $calYear,
+                'month' => $calMonth,
+                'days'  => $dailyMap,
+            ],
         ]);
+    }
+    public function getReportByDate(Request $request)
+    {
+        $date = $request->get('date'); // Y-m-d
+        if (!$date) {
+            return response()->json(['message' => 'Date required'], 422);
+        }
+
+        $start = Carbon::parse($date)->startOfDay();
+        $end   = Carbon::parse($date)->endOfDay();
+
+        $revenue = (int) PoolGameSessionPlayer::whereHas('session', function ($s) use ($start, $end) {
+            $s->where('status', 'completed')->whereBetween('end_time', [$start, $end]);
+        })->sum('total_amount');
+
+        $expense = (int) Expense::whereDate('expense_date', $date)->sum('amount');
+
+        $frames = PoolGameSession::where('status', 'completed')
+            ->whereBetween('end_time', [$start, $end])
+            ->count();
+
+        $items = PoolGameSessionOrder::select('inventory_id', DB::raw('SUM(quantity) as sold'), DB::raw('SUM(total) as amount'))
+            ->whereHas('session', fn($s) => $s->where('status', 'completed')->whereBetween('end_time', [$start, $end]))
+            ->groupBy('inventory_id')
+            ->with('inventory')
+            ->get()
+            ->map(fn($r) => [
+                'name' => $r->inventory?->item_name ?? 'Unknown',
+                'sold' => (int) $r->sold,
+                'amount' => (int) $r->amount,
+            ]);
+
+        $expenseList = Expense::whereDate('expense_date', $date)->get();
+
+        return response()->json([
+            'date' => $date,
+            'revenue' => $revenue,
+            'expense' => $expense,
+            'profit' => $revenue - $expense,
+            'frames' => $frames,
+            'items' => $items,
+            'expense_list' => $expenseList,
+        ]);
+    }
+
+    public function getCategories()
+    {
+        return response()->json(
+            InventoryCategory::orderBy('name')->get()
+        );
+    }
+
+    public function storeCategory(Request $request)
+    {
+        $validated = $request->validate([
+            'name'   => 'required|string|max:255',
+            'status' => 'nullable|boolean',
+        ]);
+
+        $validated['status'] = $request->status ?? 1;
+        $cat = InventoryCategory::create($validated);
+
+        return response()->json($cat, 201);
+    }
+
+    public function updateCategory(Request $request, $id)
+    {
+        $cat = InventoryCategory::findOrFail($id);
+
+        $validated = $request->validate([
+            'name'   => 'required|string|max:255',
+            'status' => 'nullable|boolean',
+        ]);
+
+        $cat->update($validated);
+        return response()->json($cat);
+    }
+
+    public function deleteCategory($id)
+    {
+        $cat = InventoryCategory::findOrFail($id);
+        $cat->delete();
+        return response()->json(['message' => 'Deleted']);
+    }
+
+
+    public function getExpenses()
+    {
+        return response()->json(
+            Expense::orderBy('expense_date', 'desc')->orderBy('id', 'desc')->get()
+        );
+    }
+
+    public function storeExpense(Request $request)
+    {
+        $validated = $request->validate([
+            'title'        => 'required|string|max:255',
+            'amount'       => 'required|integer|min:1',
+            'category'     => 'nullable|string|max:100',
+            'description'  => 'nullable|string|max:500',
+            'expense_date' => 'required|date',
+        ]);
+
+        $expense = Expense::create($validated);
+        return response()->json($expense, 201);
+    }
+
+    public function updateExpense(Request $request, $id)
+    {
+        $expense = Expense::findOrFail($id);
+
+        $validated = $request->validate([
+            'title'        => 'required|string|max:255',
+            'amount'       => 'required|integer|min:1',
+            'category'     => 'nullable|string|max:100',
+            'description'  => 'nullable|string|max:500',
+            'expense_date' => 'required|date',
+        ]);
+
+        $expense->update($validated);
+        return response()->json($expense);
+    }
+
+    public function deleteExpense($id)
+    {
+        $expense = Expense::findOrFail($id);
+        $expense->delete();
+        return response()->json(['message' => 'Deleted']);
     }
 }
