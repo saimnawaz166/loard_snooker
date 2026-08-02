@@ -688,6 +688,9 @@ async function deleteGameType(id) {
 /* ================= START GAME ================= */
 
 function openSetup(tableId) {
+
+  const bg = document.getElementById('setup-bill-group-id');
+if (bg) bg.value = '';
   const table = tables.find(t => t.id == tableId);
   if (!table) return;
 
@@ -745,15 +748,10 @@ async function startGame() {
   const gameTypeId = document.getElementById('setup-game-type-id').value;
   const player1 = document.getElementById('player1-name').value.trim();
   const player2 = document.getElementById('player2-name').value.trim();
+  const billGroupId = document.getElementById('setup-bill-group-id')?.value || null;
 
-  if (!gameTypeId) {
-    showError('Please select a Game Type');
-    return;
-  }
-  if (!player1 || !player2) {
-    showError('Please enter both player names');
-    return;
-  }
+  if (!gameTypeId) { showError('Please select a Game Type'); return; }
+  if (!player1 || !player2) { showError('Please enter both player names'); return; }
 
   try {
     const res = await fetch('/cueboard/api/start-game', {
@@ -766,11 +764,16 @@ async function startGame() {
         pool_table_id: tableId,
         pool_game_type_id: gameTypeId,
         player1_name: player1,
-        player2_name: player2
+        player2_name: player2,
+        bill_group_id: billGroupId || undefined
       })
     });
 
     if (res.ok) {
+      // clear bill group hidden for next normal start
+      const bg = document.getElementById('setup-bill-group-id');
+      if (bg) bg.value = '';
+
       closeModal('setup-modal');
       await loadData();
       openLive(tableId);
@@ -1011,33 +1014,37 @@ function openEndGame() {
   const discountInput = document.getElementById('end-discount');
   discountInput.value = 0;
   updateDiscountPreview();
-
   discountInput.oninput = updateDiscountPreview;
 
   openModal('end-game-modal');
 }
 function updateDiscountPreview() {
   if (!currentSession) return;
-  const discount = Math.min(100, Math.max(0, parseInt(document.getElementById('end-discount').value) || 0));
+  const discAmt = Math.max(0, parseInt(document.getElementById('end-discount').value) || 0);
   const gamePrice = currentSession.game_price || 0;
-  const finalPrice = Math.round(gamePrice * (100 - discount) / 100);
+  const finalPrice = Math.max(0, gamePrice - discAmt);
 
   const el = document.getElementById('end-discount-preview');
   if (el) {
-    el.textContent = discount > 0
-      ? `Game price: ${money(gamePrice)} → After ${discount}% off: ${money(finalPrice)}`
+    el.textContent = discAmt > 0
+      ? `Game price: ${money(gamePrice)} → After discount: ${money(finalPrice)}`
       : `Game price: ${money(gamePrice)} (no discount)`;
   }
 }
 
-async function confirmEndGame() {
+
+async function confirmEndGame(startNewFrame = false) {
   const loserId = document.getElementById('loser-select').value;
-  const discount = Math.min(100, Math.max(0, parseInt(document.getElementById('end-discount').value) || 0));
+  const discAmt = Math.max(0, parseInt(document.getElementById('end-discount').value) || 0);
 
   if (!loserId) {
     showError('Please select who lost');
     return;
   }
+
+  const savedTableId = currentTableId;
+  const savedPlayers = (currentSession?.players || []).map(p => p.player_name);
+  const savedBillGroup = currentSession?.bill_group_id || null;
 
   try {
     const res = await fetch('/cueboard/api/end-game', {
@@ -1049,29 +1056,27 @@ async function confirmEndGame() {
       body: JSON.stringify({
         session_id: currentSession.id,
         loser_player_id: loserId,
-        discount_percent: discount
+        discount_amount: discAmt
       })
     });
 
-    if (res.ok) {
-      const finalSession = await res.json();
-      closeModal('end-game-modal');
-      if (timerInterval) clearInterval(timerInterval);
-
-      let summary = 'Game Ended!\n\n';
-      finalSession.players.forEach(p => {
-        summary += `${p.player_name}: ${money(p.total_amount)}\n`;
-      });
-      if (discount > 0) {
-        summary += `\nDiscount: ${discount}% on game price`;
-      }
-      showSuccess(summary);
-
-      await loadData();
-      switchView('tables');
-    } else {
+    if (!res.ok) {
       const err = await res.json();
       showError(err.message || 'Failed to end game');
+      return;
+    }
+
+    const finalSession = await res.json();
+    closeModal('end-game-modal');
+    if (timerInterval) clearInterval(timerInterval);
+
+    await loadData();
+
+    if (startNewFrame && savedTableId) {
+      openSetupForNewFrame(savedTableId, savedPlayers, savedBillGroup || finalSession.bill_group_id);
+    } else {
+      switchView('tables');
+      await viewBill(finalSession.id);   // ← same bill modal
     }
   } catch (e) {
     console.error(e);
@@ -1079,6 +1084,67 @@ async function confirmEndGame() {
   }
 }
 
+function openSetupForNewFrame(tableId, playerNames = [], billGroupId = null) {
+  const table = tables.find(t => t.id == tableId);
+  if (!table) {
+    switchView('tables');
+    return;
+  }
+
+  document.getElementById('setup-title').textContent = `New Frame — ${table.name} (Same Bill)`;
+  document.getElementById('setup-table-id').value = tableId;
+  document.getElementById('setup-game-type-id').value = '';
+
+  // Hidden bill group
+  let bg = document.getElementById('setup-bill-group-id');
+  if (!bg) {
+    bg = document.createElement('input');
+    bg.type = 'hidden';
+    bg.id = 'setup-bill-group-id';
+    document.getElementById('setup-modal')?.querySelector('.modal')?.appendChild(bg);
+  }
+  bg.value = billGroupId || '';
+
+  document.getElementById('player1-name').value = playerNames[0] || '';
+  document.getElementById('player2-name').value = playerNames[1] || '';
+
+  // Game type cards (same as openSetup)
+  const container = document.getElementById('setup-game-options');
+  container.innerHTML = '';
+  const tableGames = gameTypes.filter(g => g.pool_table_id == tableId && g.status == 1);
+  const ballSets = [
+    ['#c1453a', '#d4a72c', '#2f6f3e'],
+    ['#c1453a', '#c1453a', '#d4a72c'],
+    ['#c1453a', '#c1453a', '#c1453a'],
+    ['#8b929b', '#8b929b', '#8b929b'],
+  ];
+
+  if (tableGames.length === 0) {
+    container.innerHTML = `<div style="grid-column:1/-1; text-align:center; color:#888; padding:20px;">No game types for this table</div>`;
+  } else {
+    tableGames.forEach((g, index) => {
+      const timeMin = timeToMinutes(g.time) || 0;
+      const colors = ballSets[index % ballSets.length];
+      const div = document.createElement('div');
+      div.className = 'game-opt';
+      div.dataset.id = g.id;
+      div.innerHTML = `
+        <div class="balls">${colors.map(c => `<span class="ball-dot" style="background:${c}"></span>`).join('')}</div>
+        <div class="gname">${g.game_name}</div>
+        <div class="grate">${money(g.price)} • ${timeMin} min</div>
+      `;
+      div.onclick = () => {
+        document.querySelectorAll('#setup-game-options .game-opt').forEach(o => o.classList.remove('selected'));
+        div.classList.add('selected');
+        document.getElementById('setup-game-type-id').value = g.id;
+      };
+      container.appendChild(div);
+    });
+  }
+
+  switchView('tables'); // UI base
+  openModal('setup-modal');
+}
 function timeToMinutes(timeStr) {
   if (!timeStr) return '';
   // Agar already number hai
@@ -1122,35 +1188,35 @@ function renderBilling(data) {
   const pagination = document.getElementById('billing-pagination');
   if (!tbody) return;
 
-  // Safety check
-  if (!data || !data.data) {
+  if (!data || !data.data || data.data.length === 0) {
     tbody.innerHTML = `
-    <tr>
-      <td colspan="7" style="text-align:center; padding:40px; color:#888;">
-        No bills found.
-      </td>
-    </tr>`;
+      <tr>
+        <td colspan="7" style="text-align:center; padding:40px; color:#888;">
+          No bills found.
+        </td>
+      </tr>`;
     if (pagination) pagination.innerHTML = '';
     return;
   }
 
-  const bills = data.data;   // ← YE LINE MISSING THI
+  const bills = data.data;
 
   tbody.innerHTML = bills.map(b => {
     const tableName = b.table?.name || '—';
-    const gameName = b.game_type?.game_name || '—';
-    const players = (b.players || []).map(p => p.player_name).join(' vs ');
-    const total = (b.players || []).reduce((sum, p) => sum + (p.total_amount || 0), 0);
+    const gameName = b.game_names || b.game_type?.game_name || '—';
+    const players = b.players_label || '—';
+    const total = b.total ?? 0;
+    const frames = b.frames_count > 1 ? ` (${b.frames_count} frames)` : '';
     const statusBadge = b.payment_status === 'paid'
-      ? `<span class="badge ok">Paid</span>`
-      : `<span class="badge out">Unpaid</span>`;
-    const closedAt = b.end_time
-      ? new Date(b.end_time).toLocaleString()
-      : '—';
+  ? `<span class="badge ok">Paid</span>`
+  : b.payment_status === 'pending'
+    ? `<span class="badge low">Pending</span>`
+    : `<span class="badge out">Unpaid</span>`;
+    const closedAt = b.end_time ? new Date(b.end_time).toLocaleString() : '—';
 
     return `
       <tr>
-        <td><strong>${tableName}</strong></td>
+        <td><strong>${tableName}</strong>${frames}</td>
         <td>${gameName}</td>
         <td>${players}</td>
         <td><b>${money(total)}</b></td>
@@ -1158,15 +1224,15 @@ function renderBilling(data) {
         <td>${closedAt}</td>
         <td>
           <button class="btn btn-sm btn-outline" onclick="viewBill(${b.id})">View</button>
-          ${b.payment_status !== 'paid'
-        ? `<button class="btn btn-sm btn-primary" onclick="markPaid(${b.id})">Mark Paid</button>`
-        : ''}
+          ${b.payment_status === 'paid'
+            ? `<button class="btn btn-sm btn-outline" onclick="markUnpaid(${b.id})">Mark Unpaid</button>`
+            : `<button class="btn btn-sm btn-primary" onclick="markPaid(${b.id})">Mark Paid</button>`
+          }
         </td>
       </tr>
     `;
   }).join('');
 
-  // Pagination
   if (pagination) {
     let html = '';
     if (data.prev_page_url) {
@@ -1188,71 +1254,147 @@ async function viewBill(id) {
       return;
     }
     const bill = await res.json();
+    const sessions = bill.sessions || [bill];
+    const tableName = bill.table?.name || sessions[0]?.table?.name || 'Table';
 
-    const tableName = bill.table?.name || 'Table';
-    const gameName = bill.game_type?.game_name || 'Game';
-    const players = bill.players || [];
+    const status = bill.payment_status || 'unpaid';
+    const paidAmt = bill.amount_paid ?? sessions[0]?.amount_paid ?? 0;
+    const statusClass = status === 'paid' ? 'paid' : (status === 'pending' ? 'pending' : 'unpaid');
+    const statusLabel = status === 'paid' ? 'PAID' : (status === 'pending' ? 'PENDING' : 'UNPAID');
 
-    let playersHtml = players.map(p => {
-      const orders = (p.orders || []).map(o =>
-        `<div class="rline"><span>${o.inventory?.item_name || 'Item'} × ${o.quantity}</span><span>${money(o.total)}</span></div>`
-      ).join('') || '<div class="rline"><span>No items</span><span>—</span></div>';
+    const firstStart = sessions[0]?.start_time;
+    const lastEnd = sessions[sessions.length - 1]?.end_time;
 
-      const isLoser = p.id == bill.loser_player_id;
-      let gameCharge = '';
-      if (isLoser) {
-        const original = bill.game_price || 0;
-        const discounted = bill.discounted_game_price ?? original;
-        const disc = bill.discount_percent || 0;
+    let grandTotal = 0;
 
-        if (disc > 0) {
-          gameCharge = `
-      <div class="rline"><span>Game Price</span><span>${money(original)}</span></div>
-      <div class="rline"><span>Discount (${disc}%)</span><span>- ${money(original - discounted)}</span></div>
-      <div class="rline"><span>Game Price (After Discount)</span><span>${money(discounted)}</span></div>
-    `;
-        } else {
-          gameCharge = `<div class="rline"><span>Game Price (Lost)</span><span>${money(original)}</span></div>`;
+    const framesHtml = sessions.map((session, idx) => {
+      const gameName = session.game_type?.game_name || session.gameType?.game_name || 'Game';
+      const players = session.players || [];
+      let frameTotal = 0;
+
+      const playersHtml = players.map(p => {
+        frameTotal += (p.total_amount || 0);
+
+        const orders = p.orders || [];
+        const ordersHtml = orders.length
+          ? orders.map(o => `
+              <div class="bill-line indent">
+                <span>${o.inventory?.item_name || 'Item'} × ${o.quantity}</span>
+                <span>${money(o.total)}</span>
+              </div>`).join('')
+          : `<div class="bill-line indent"><span style="color:var(--text-faint)">No snacks / drinks</span><span>—</span></div>`;
+
+        const isLoser = p.id == session.loser_player_id;
+        const original = session.game_price || 0;
+        const discounted = session.discounted_game_price ?? original;
+        const disc = session.discount_percent || 0;
+
+        let gameHtml = '';
+        if (isLoser) {
+          if (disc > 0 || (discounted < original && original > 0)) {
+            gameHtml = `
+              <div class="bill-line indent"><span>Game price</span><span>${money(original)}</span></div>
+              <div class="bill-line indent disc"><span>Discount</span><span>− ${money(original - discounted)}</span></div>
+              <div class="bill-line indent"><span>Game (after discount)</span><span>${money(discounted)}</span></div>`;
+          } else {
+            gameHtml = `<div class="bill-line indent"><span>Game price (lost)</span><span>${money(original)}</span></div>`;
+          }
         }
-      }
+
+        return `
+          <div class="player-block">
+            <div class="pname">
+              ${p.player_name}
+              ${isLoser ? '<span class="lost-tag">LOST</span>' : ''}
+            </div>
+            ${ordersHtml}
+            ${gameHtml}
+            <div class="bill-line sub">
+              <span>Player total</span>
+              <span>${money(p.total_amount)}</span>
+            </div>
+          </div>`;
+      }).join('');
+
+      grandTotal += frameTotal;
+
+      const t1 = session.start_time ? new Date(session.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+      const t2 = session.end_time ? new Date(session.end_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
 
       return `
-        <div style="margin-bottom:16px;">
-          <h4 style="margin-bottom:8px; color:var(--brass);">${p.player_name} ${isLoser ? '(Lost)' : ''}</h4>
-          ${orders}
-          ${gameCharge}
-          <div class="rline total"><span>Subtotal</span><span>${money(p.total_amount)}</span></div>
-        </div>
-      `;
+        <div class="frame-block">
+          <div class="frame-label">
+            <b>Frame ${idx + 1} — ${gameName}</b>
+            <span>${t1}${t2 ? ' → ' + t2 : ''}</span>
+          </div>
+          ${playersHtml}
+          ${sessions.length > 1 ? `
+            <div class="bill-line sub" style="border-top:1px dashed var(--border); margin-top:8px;">
+              <span>Frame total</span>
+              <span>${money(frameTotal)}</span>
+            </div>` : ''}
+        </div>`;
     }).join('');
 
-    const grandTotal = players.reduce((sum, p) => sum + (p.total_amount || 0), 0);
+    const dateLine = firstStart
+      ? new Date(firstStart).toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })
+      : '';
 
     document.getElementById('bill-detail-content').innerHTML = `
-  <div class="receipt" style="max-width:100%; margin:0; box-shadow:none; border:none; padding:0;">
-    <h3 style="text-align:center;">${tableName} — ${gameName}</h3>
-    <div class="rsub" style="text-align:center; margin-bottom:16px;">
-      ${bill.start_time ? new Date(bill.start_time).toLocaleString() : ''} → 
-      ${bill.end_time ? new Date(bill.end_time).toLocaleString() : ''}<br>
-      Status: <b id="bill-status-text">${bill.payment_status === 'paid' ? 'PAID' : 'UNPAID'}</b>
-    </div>
-    ${playersHtml}
-    <div class="rline total" style="margin-top:12px; font-size:18px;">
-      <span>Grand Total</span><span>${money(grandTotal)}</span>
-    </div>
-  </div>
-`;
+      <div class="bill-sheet">
+        <div class="bill-head">
+          <h3>${tableName}</h3>
+          <div class="bill-meta">
+            ${dateLine}<br>
+            ${sessions.length} frame${sessions.length > 1 ? 's' : ''}
+            ${lastEnd ? ' · Closed ' + new Date(lastEnd).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+          </div>
+          <div class="bill-status ${statusClass}">${statusLabel}</div>
+        </div>
 
-    // Buttons update
+        ${framesHtml}
+
+        <div class="bill-grand">
+          <div class="glabel">Grand Total</div>
+          <div class="gamt">${money(grandTotal)}</div>
+        </div>
+
+        ${(status === 'pending' || paidAmt > 0) ? `
+          <div style="margin-top:10px; font-size:12px; color:var(--text-dim); text-align:right;">
+            Received: <b style="color:var(--brass)">${money(paidAmt)}</b>
+            &nbsp;·&nbsp; Balance: <b style="color:#e8837a">${money(Math.max(0, grandTotal - paidAmt))}</b>
+          </div>` : ''}
+      </div>`;
+
     const actions = document.querySelector('#bill-detail-modal .modal-actions');
+    const payId = bill.id;
+
     actions.innerHTML = `
-  <button class="btn btn-outline" style="flex:1" onclick="closeModal('bill-detail-modal')">Close</button>
-  <button class="btn btn-primary" style="flex:1" onclick="window.print()">Print</button>
-  ${bill.payment_status === 'paid'
-        ? `<button class="btn btn-outline" style="flex:1" onclick="markUnpaid(${bill.id}); closeModal('bill-detail-modal');">Mark Unpaid</button>`
-        : `<button class="btn btn-primary" style="flex:1" onclick="markPaid(${bill.id}); closeModal('bill-detail-modal');">Mark Paid</button>`
-      }
-`;
+      <div style="width:100%; display:flex; flex-direction:column; gap:10px;">
+        <div style="display:flex; gap:8px;">
+          <button type="button" class="btn ${status === 'pending' ? 'btn-primary' : 'btn-outline'}" style="flex:1"
+            onclick="setBillPayment(${payId}, 'pending', ${grandTotal})">Pending</button>
+          <button type="button" class="btn ${status === 'paid' ? 'btn-primary' : 'btn-outline'}" style="flex:1"
+            onclick="setBillPayment(${payId}, 'paid', ${grandTotal})">Paid</button>
+          <button type="button" class="btn ${status === 'unpaid' ? 'btn-primary' : 'btn-outline'}" style="flex:1"
+            onclick="setBillPayment(${payId}, 'unpaid', 0)">Unpaid</button>
+        </div>
+
+        <div id="pending-amount-box" style="display:${status === 'pending' ? 'block' : 'none'};">
+          <div class="field" style="margin:0;">
+            <label>Amount Received (Rs)</label>
+            <input type="number" id="bill-amount-paid" value="${paidAmt || ''}" min="0" placeholder="e.g. 500">
+          </div>
+          <button type="button" class="btn btn-primary btn-block" style="margin-top:8px;"
+            onclick="savePendingAmount(${payId}, ${grandTotal})">Save Amount</button>
+        </div>
+
+        <div style="display:flex; gap:8px;">
+          <button type="button" class="btn btn-outline" style="flex:1" onclick="closeModal('bill-detail-modal')">Close</button>
+          <button type="button" class="btn btn-primary" style="flex:1" onclick="window.print()">Print</button>
+        </div>
+      </div>
+    `;
 
     openModal('bill-detail-modal');
   } catch (e) {
@@ -1260,7 +1402,6 @@ async function viewBill(id) {
     showError('Failed to load bill details');
   }
 }
-
 async function markPaid(id) {
   // if (!confirm('Mark this bill as Paid?')) return;
   const result = await showConfirm('Mark this bill as Paid?');
@@ -1802,5 +1943,81 @@ async function deleteExpense(id) {
   } catch (e) {
     console.error(e);
     showError('Error deleting');
+  }
+}
+async function setBillPayment(id, status, grandTotal) {
+  if (status === 'pending') {
+    const box = document.getElementById('pending-amount-box');
+    if (box) box.style.display = 'block';
+    return;
+  }
+
+  const amount = status === 'paid' ? grandTotal : 0;
+
+  try {
+    const res = await fetch(`/cueboard/api/billing/${id}/payment`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+      },
+      body: JSON.stringify({
+        payment_status: status,
+        amount_paid: amount
+      })
+    });
+
+    if (res.ok) {
+      showSuccess(status === 'paid' ? 'Marked as Paid' : 'Marked as Unpaid');
+      closeModal('bill-detail-modal');
+      if (typeof loadBilling === 'function') {
+        loadBilling(typeof billingPage !== 'undefined' ? billingPage : 1);
+      }
+    } else {
+      showError('Failed to update payment');
+    }
+  } catch (e) {
+    console.error(e);
+    showError('Network error');
+  }
+}
+
+async function savePendingAmount(id, grandTotal) {
+  const amount = Math.max(0, parseInt(document.getElementById('bill-amount-paid')?.value) || 0);
+
+  if (amount <= 0) {
+    showError('Enter amount received');
+    return;
+  }
+
+  if (amount >= grandTotal) {
+    return setBillPayment(id, 'paid', grandTotal);
+  }
+
+  try {
+    const res = await fetch(`/cueboard/api/billing/${id}/payment`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+      },
+      body: JSON.stringify({
+        payment_status: 'pending',
+        amount_paid: amount
+      })
+    });
+
+    if (res.ok) {
+      showSuccess('Pending amount saved');
+      closeModal('bill-detail-modal');
+      if (typeof loadBilling === 'function') {
+        loadBilling(typeof billingPage !== 'undefined' ? billingPage : 1);
+      }
+    } else {
+      showError('Failed to save');
+    }
+  } catch (e) {
+    console.error(e);
+    showError('Network error');
   }
 }

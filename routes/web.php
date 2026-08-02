@@ -61,6 +61,8 @@ Route::middleware('auth')->group(function () {
         Route::post('/api/expenses', [CueboardController::class, 'storeExpense']);
         Route::put('/api/expenses/{id}', [CueboardController::class, 'updateExpense']);
         Route::delete('/api/expenses/{id}', [CueboardController::class, 'deleteExpense']);
+
+        Route::post('/api/billing/{id}/payment', [CueboardController::class, 'updatePayment']);
     });
 });
 

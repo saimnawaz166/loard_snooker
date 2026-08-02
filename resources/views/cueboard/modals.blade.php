@@ -158,7 +158,7 @@
 <div class="modal-backdrop" id="end-game-modal">
   <div class="modal">
     <h3>End Game</h3>
-    <div class="sub">Select the player who lost. Game price will be added to their bill.</div>
+    <div class="sub">Select loser and optional discount (Rs) on game price only.</div>
 
     <div class="field">
       <label>Who Lost?</label>
@@ -166,22 +166,24 @@
         <option value="">-- Select Loser --</option>
       </select>
     </div>
+
     <div class="field">
-      <label>Discount on Game Price (%)</label>
-      <input type="number" id="end-discount" value="0" min="0" max="100" placeholder="0">
+      <label>Discount on Game Price (Rs)</label>
+      <input type="number" id="end-discount" value="0" min="0" placeholder="0">
     </div>
+    <div class="sub" id="end-discount-preview" style="margin-top:4px; color:var(--brass);"></div>
 
-    <div class="sub" id="end-discount-preview" style="margin-top:4px; color:var(--brass);">
-      <!-- JS se preview -->
-    </div>
-
-    <div class="modal-actions">
-      <button class="btn btn-outline" style="flex:1" onclick="closeModal('end-game-modal')">Cancel</button>
-      <button class="btn btn-danger" style="flex:1" onclick="confirmEndGame()">End Game</button>
+    <div class="modal-actions" style="flex-direction:column; gap:10px;">
+      <button class="btn btn-primary" style="width:100%" onclick="confirmEndGame(true)">
+        End &amp; New Frame (Same Bill)
+      </button>
+      <div style="display:flex; gap:10px; width:100%;">
+        <button class="btn btn-outline" style="flex:1" onclick="closeModal('end-game-modal')">Cancel</button>
+        <button class="btn btn-danger" style="flex:1" onclick="confirmEndGame(false)">End Game</button>
+      </div>
     </div>
   </div>
 </div>
-
 
 <!-- ================= BILL DETAILS MODAL ================= -->
 <div class="modal-backdrop" id="bill-detail-modal">

@@ -467,6 +467,41 @@ nav.side-nav::-webkit-scrollbar-thumb{ background:var(--border); border-radius:4
   border-color: var(--felt-light) !important;
   background: rgba(23,122,74,0.15) !important;
 }
+
+.bill-sheet{ font-size:13px; }
+.bill-head{ text-align:center; margin-bottom:18px; padding-bottom:14px; border-bottom:1px solid var(--border); }
+.bill-head h3{ font-family:'Oswald'; font-size:20px; letter-spacing:.5px; margin-bottom:4px; }
+.bill-meta{ color:var(--text-dim); font-size:12px; line-height:1.6; }
+.bill-status{ display:inline-block; margin-top:8px; padding:3px 12px; border-radius:20px; font-size:11px; font-family:'JetBrains Mono'; font-weight:600; }
+.bill-status.paid{ background:rgba(28,138,84,.15); color:var(--felt-light); }
+.bill-status.unpaid{ background:var(--red-dim); color:#e8837a; }
+
+.frame-block{ background:var(--bg); border:1px solid var(--border); border-radius:12px; padding:14px 16px; margin-bottom:12px; }
+.frame-block .frame-label{ display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; padding-bottom:8px; border-bottom:1px dashed var(--border); }
+.frame-block .frame-label b{ color:var(--brass); font-size:13px; }
+.frame-block .frame-label span{ font-size:11px; color:var(--text-faint); font-family:'JetBrains Mono'; }
+
+.player-block{ margin-bottom:12px; }
+.player-block:last-child{ margin-bottom:0; }
+.player-block .pname{ font-weight:600; font-size:13.5px; margin-bottom:6px; display:flex; align-items:center; gap:8px; }
+.player-block .pname .lost-tag{ font-size:10px; font-family:'JetBrains Mono'; background:var(--red-dim); color:#e8837a; padding:2px 8px; border-radius:20px; }
+
+.bill-line{ display:flex; justify-content:space-between; padding:4px 0; font-size:12.5px; color:var(--text-dim); }
+.bill-line span:last-child{ color:var(--cream); font-family:'JetBrains Mono'; font-size:12px; }
+.bill-line.indent{ padding-left:10px; }
+.bill-line.disc{ color:#e8837a; }
+.bill-line.disc span:last-child{ color:#e8837a; }
+.bill-line.sub{ margin-top:4px; padding-top:6px; border-top:1px solid var(--border); font-weight:600; color:var(--cream); }
+.bill-line.sub span:last-child{ font-weight:700; }
+
+.bill-grand{ margin-top:16px; padding:14px 16px; background:rgba(28,138,84,.1); border:1px solid rgba(28,138,84,.3); border-radius:12px; display:flex; justify-content:space-between; align-items:center; }
+.bill-grand .glabel{ font-size:13px; color:var(--text-dim); text-transform:uppercase; letter-spacing:.5px; }
+.bill-grand .gamt{ font-family:'JetBrains Mono'; font-size:22px; font-weight:700; color:var(--felt-light); }
+
+.bill-status.pending{
+  background: var(--amber-dim);
+  color: var(--amber);
+}
     </style>
 </head>
 <body>
