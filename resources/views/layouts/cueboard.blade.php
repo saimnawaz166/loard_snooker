@@ -502,6 +502,55 @@ nav.side-nav::-webkit-scrollbar-thumb{ background:var(--border); border-radius:4
   background: var(--amber-dim);
   color: var(--amber);
 }
+.pay-method-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.pay-method-opt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  background: #1a1f1c;
+  user-select: none;
+}
+
+.pay-method-opt input[type="radio"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  border: 2px solid #555;
+  border-radius: 50%;
+  background: transparent;
+  margin: 0;
+  cursor: pointer;
+}
+
+.pay-method-opt input[type="radio"]:checked {
+  border-color: #d4a72c;
+  background: #d4a72c;
+  box-shadow: inset 0 0 0 3px #1a1f1c;
+}
+
+.pay-method-opt:has(input:checked) {
+  border-color: #d4a72c;
+  background: rgba(212, 167, 44, 0.12);
+}
+
+.pay-method-opt:hover {
+  border-color: #d4a72c;
+}
     </style>
 </head>
 <body>

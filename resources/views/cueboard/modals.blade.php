@@ -73,7 +73,7 @@
 <div class="modal-backdrop" id="game-type-modal">
   <div class="modal">
     <h3 id="game-type-title">Add Game Type</h3>
-    <div class="sub">Set game name, time and price.</div>
+    <div class="sub">Set game name, billing mode and price.</div>
 
     <input type="hidden" id="gt-id">
 
@@ -86,17 +86,33 @@
 
     <div class="field">
       <label>Game Name</label>
-      <input type="text" id="gt-name" placeholder="e.g. 10 Red Ball">
+      <input type="text" id="gt-name" placeholder="e.g. 10 Red Ball / Fifty">
     </div>
 
     <div class="field">
-      <label>Time (minutes)</label>
-      <input type="number" id="gt-time" placeholder="e.g. 30" min="1">
+      <label>Billing Mode</label>
+      <select id="gt-billing-mode" onchange="onBillingModeChange()">
+        <option value="fixed">Fixed time & price</option>
+        <option value="per_minute">Per minute (Fifty / Century)</option>
+      </select>
     </div>
 
-    <div class="field">
-      <label>Price (Rs)</label>
-      <input type="number" id="gt-price" placeholder="300">
+    <div id="gt-fixed-fields">
+      <div class="field">
+        <label>Time (minutes)</label>
+        <input type="number" id="gt-time" placeholder="e.g. 30" min="1">
+      </div>
+      <div class="field">
+        <label>Price (Rs)</label>
+        <input type="number" id="gt-price" placeholder="300" min="0">
+      </div>
+    </div>
+
+    <div id="gt-permin-fields" style="display:none;">
+      <div class="field">
+        <label>Price per minute (Rs)</label>
+        <input type="number" id="gt-price-per-min" placeholder="e.g. 10" min="1">
+      </div>
     </div>
 
     <div class="field">
@@ -159,6 +175,8 @@
   <div class="modal">
     <h3>End Game</h3>
     <div class="sub">Select loser and optional discount (Rs) on game price only.</div>
+
+        <div id="end-game-price-info" style="margin-bottom:12px; color:var(--brass); font-weight:600;"></div>
 
     <div class="field">
       <label>Who Lost?</label>

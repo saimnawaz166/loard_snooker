@@ -63,6 +63,11 @@ Route::middleware('auth')->group(function () {
         Route::delete('/api/expenses/{id}', [CueboardController::class, 'deleteExpense']);
 
         Route::post('/api/billing/{id}/payment', [CueboardController::class, 'updatePayment']);
+
+
+
+        Route::delete('/api/orders/{orderId}', [CueboardController::class, 'removeOrder']);
+        Route::post('/api/cancel-game', [CueboardController::class, 'cancelGame']);
     });
 });
 

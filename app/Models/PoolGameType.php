@@ -6,7 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 
 class PoolGameType extends Model
 {
-    protected $fillable = ['pool_table_id', 'game_name', 'time', 'price', 'status'];
+    protected $fillable = ['pool_table_id', 'game_name', 'time', 'price', 'status','billing_mode', 'price_per_minute',];
 
 
     public function sessions()

@@ -93,14 +93,28 @@ class CueboardController extends Controller
     public function storeGameType(Request $request)
     {
         $validated = $request->validate([
-            'game_name' => 'required|string|max:255',
-            'time'           => 'required|integer|min:1',
-            'price'     => 'required|integer|min:0',
-            'status'    => 'nullable|boolean',
-            'pool_table_id' => 'required|exists:pool_tables,id'
+            'game_name'        => 'required|string|max:255',
+            'pool_table_id'    => 'required|exists:pool_tables,id',
+            'billing_mode'     => 'required|in:fixed,per_minute',
+            'time'             => 'nullable|integer|min:1',
+            'price'            => 'nullable|integer|min:0',
+            'price_per_minute' => 'nullable|integer|min:1',
+            'status'           => 'nullable|boolean',
         ]);
-        $validated['time'] = gmdate('H:i:s', $validated['time'] * 60); // Convert minutes to H:i:s format
 
+        if ($validated['billing_mode'] === 'fixed') {
+            if (empty($validated['time']) || !isset($validated['price'])) {
+                return response()->json(['message' => 'Time and price required for fixed mode'], 422);
+            }
+            $validated['time'] = gmdate('H:i:s', (int) $validated['time'] * 60);
+            $validated['price_per_minute'] = null;
+        } else {
+            if (empty($validated['price_per_minute'])) {
+                return response()->json(['message' => 'Price per minute required'], 422);
+            }
+            $validated['time']  = null;
+            $validated['price'] = 0;
+        }
 
         $validated['status'] = $request->status ?? 1;
 
@@ -112,12 +126,30 @@ class CueboardController extends Controller
         $game = PoolGameType::findOrFail($id);
 
         $validated = $request->validate([
-            'game_name' => 'required|string|max:255',
-            'time'           => 'required|integer|min:1',
-            'price'     => 'required|integer|min:0',
-            'status'    => 'nullable|boolean',
+            'game_name'        => 'required|string|max:255',
+            'pool_table_id'    => 'required|exists:pool_tables,id',
+            'billing_mode'     => 'required|in:fixed,per_minute',
+            'time'             => 'nullable|integer|min:1',
+            'price'            => 'nullable|integer|min:0',
+            'price_per_minute' => 'nullable|integer|min:1',
+            'status'           => 'nullable|boolean',
         ]);
-        $validated['time'] = gmdate('H:i:s', $validated['time'] * 60); // Convert minutes to H:i:s format
+
+        if ($validated['billing_mode'] === 'fixed') {
+            if (empty($validated['time']) || !isset($validated['price'])) {
+                return response()->json(['message' => 'Time and price required for fixed mode'], 422);
+            }
+            $validated['time'] = gmdate('H:i:s', (int) $validated['time'] * 60);
+            $validated['price_per_minute'] = null;
+        } else {
+            if (empty($validated['price_per_minute'])) {
+                return response()->json(['message' => 'Price per minute required'], 422);
+            }
+            $validated['time']  = null;
+            $validated['price'] = 0;
+        }
+
+        $validated['status'] = $request->status ?? 1;
 
         $game->update($validated);
         return response()->json($game);
@@ -260,14 +292,24 @@ class CueboardController extends Controller
             'discount_amount'  => 'nullable|integer|min:0',
         ]);
 
-        $session = PoolGameSession::with('players')->findOrFail($validated['session_id']);
+        $session = PoolGameSession::with(['players', 'gameType'])->findOrFail($validated['session_id']);
 
         if ($session->status !== 'active') {
             return response()->json(['message' => 'Session already completed'], 422);
         }
 
+        $gameType = $session->gameType;
+        $start = Carbon::parse($session->start_time);
+        $elapsedMinutes = max(1, (int) ceil($start->diffInSeconds(now()) / 60));
+
+        if (($gameType->billing_mode ?? 'fixed') === 'per_minute') {
+            $rate = (int) ($gameType->price_per_minute ?? 0);
+            $gamePrice = $elapsedMinutes * $rate;
+        } else {
+            $gamePrice = (int) $session->game_price;
+        }
+
         $discAmt = (int) ($validated['discount_amount'] ?? 0);
-        $gamePrice = (int) $session->game_price;
         $discountedPrice = max(0, $gamePrice - $discAmt);
         $discountPercent = $gamePrice > 0 ? (int) round(($discAmt / $gamePrice) * 100) : 0;
 
@@ -280,6 +322,7 @@ class CueboardController extends Controller
                 'end_time'              => now(),
                 'status'                => 'completed',
                 'loser_player_id'       => $validated['loser_player_id'],
+                'game_price'            => $gamePrice,
                 'discount_percent'      => $discountPercent,
                 'discounted_game_price' => $discountedPrice,
                 'payment_status'        => 'unpaid',
@@ -291,7 +334,6 @@ class CueboardController extends Controller
             DB::commit();
 
             $session->load(['players.orders.inventory', 'gameType', 'table', 'loser']);
-
             return response()->json($session);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -301,9 +343,15 @@ class CueboardController extends Controller
     public function updatePayment(Request $request, $id)
     {
         $validated = $request->validate([
-            'payment_status' => 'required|in:unpaid,pending,paid',
-            'amount_paid'    => 'nullable|integer|min:0',
+            'payment_status'  => 'required|in:unpaid,pending,paid',
+            'amount_paid'     => 'nullable|integer|min:0',
+            'payment_method'  => 'nullable|in:cash,easypaisa,jazzcash,bank',
+            'payment_note'    => 'nullable|string|max:255',
         ]);
+
+        if ($validated['payment_status'] === 'paid' && empty($validated['payment_method'])) {
+            return response()->json(['message' => 'Payment method is required when marking as Paid'], 422);
+        }
 
         $session = PoolGameSession::findOrFail($id);
 
@@ -315,14 +363,24 @@ class CueboardController extends Controller
         }
 
         $amountPaid = (int) ($validated['amount_paid'] ?? 0);
+        $method = $validated['payment_method'] ?? null;
+        $note   = $validated['payment_note'] ?? null;
 
         if ($validated['payment_status'] === 'unpaid') {
             $amountPaid = 0;
+            $method = null;
+            // $note = null;
         }
 
+        // if ($validated['payment_status'] === 'pending') {
+        //     $method = null; // method sirf paid pe
+        // }
+
         $q->update([
-            'payment_status' => $validated['payment_status'],
-            'amount_paid'    => $amountPaid,
+            'payment_status'  => $validated['payment_status'],
+            'amount_paid'     => $amountPaid,
+            'payment_method'  => $method,
+            'payment_note'    => $note,
         ]);
 
         return response()->json(['message' => 'Payment updated']);
@@ -443,6 +501,8 @@ class CueboardController extends Controller
             'table'          => $sessions->first()?->table,
             'start_time'     => $sessions->first()?->start_time,
             'end_time'       => $sessions->last()?->end_time,
+            'payment_method' => $sessions->first()?->payment_method,
+            'payment_note'   => $sessions->first()?->payment_note,
         ]);
     }
 
@@ -789,5 +849,77 @@ class CueboardController extends Controller
         $expense = Expense::findOrFail($id);
         $expense->delete();
         return response()->json(['message' => 'Deleted']);
+    }
+
+    // ================= REMOVE ORDER =================
+    public function removeOrder($orderId)
+    {
+        $order = PoolGameSessionOrder::with('session')->findOrFail($orderId);
+
+        if ($order->session?->status !== 'active') {
+            return response()->json(['message' => 'Can only remove items from active game'], 422);
+        }
+
+        DB::beginTransaction();
+        try {
+            // Stock wapas
+            Inventory::where('id', $order->inventory_id)
+                ->increment('quantity', $order->quantity);
+
+            // Player total kam
+            PoolGameSessionPlayer::where('id', $order->player_id)
+                ->decrement('total_amount', $order->total);
+
+            $order->delete();
+
+            DB::commit();
+            return response()->json(['message' => 'Order removed']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['message' => 'Failed to remove order'], 500);
+        }
+    }
+
+    // ================= CANCEL ACTIVE GAME =================
+    public function cancelGame(Request $request)
+    {
+        $validated = $request->validate([
+            'session_id' => 'required|exists:pool_game_sessions,id',
+        ]);
+
+        $session = PoolGameSession::with(['players.orders'])->findOrFail($validated['session_id']);
+
+        if ($session->status !== 'active') {
+            return response()->json(['message' => 'Only active games can be cancelled'], 422);
+        }
+
+        DB::beginTransaction();
+        try {
+            // Saari orders ka stock wapas
+            foreach ($session->players as $player) {
+                foreach ($player->orders as $order) {
+                    Inventory::where('id', $order->inventory_id)
+                        ->increment('quantity', $order->quantity);
+                }
+            }
+
+            // Orders delete
+            PoolGameSessionOrder::where('pool_game_session_id', $session->id)->delete();
+
+            // Players delete
+            PoolGameSessionPlayer::where('pool_game_session_id', $session->id)->delete();
+
+            // Table free
+            PoolTable::where('id', $session->pool_table_id)->update(['status' => 0]);
+
+            // Session delete
+            $session->delete();
+
+            DB::commit();
+            return response()->json(['message' => 'Game cancelled']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['message' => 'Failed to cancel game', 'error' => $e->getMessage()], 500);
+        }
     }
 }

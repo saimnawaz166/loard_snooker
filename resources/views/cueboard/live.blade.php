@@ -31,6 +31,7 @@
 
   <div style="display:flex; gap:12px; margin-top:24px;">
     <button class="btn btn-outline" style="flex:1" onclick="switchView('tables')">Back to Tables</button>
+    <button class="btn btn-outline" style="flex:1" onclick="cancelActiveGame()">Cancel Game</button>
     <button class="btn btn-danger" style="flex:1" onclick="openEndGame()">End & Bill</button>
   </div>
 </section>

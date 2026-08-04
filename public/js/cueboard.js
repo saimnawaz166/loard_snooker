@@ -162,33 +162,44 @@ function renderTables() {
       const players = session.players || [];
       const playerNames = players.map(p => p.player_name).join(' vs ');
       const gameName = session.game_type?.game_name || 'Game';
-      const gameTimeMin = timeToMinutes(session.game_type?.time) || 0;
-      const gameTimeMs = gameTimeMin * 60 * 1000;
-
+      const mode = session.game_type?.billing_mode || 'fixed';
       const start = new Date(session.start_time).getTime();
-      const elapsedMs = Date.now() - start;
-      const remainingMs = Math.max(0, gameTimeMs - elapsedMs);
-
-      isTimeOver = remainingMs <= 0;
-
-      if (isTimeOver) {
-        cardExtraClass += ' time-over';
-      }
 
       playersHtml = `<div class="sub-row"><span>Players</span><b>${playerNames || '—'}</b></div>`;
       gameInfo = `<div class="game-badge">🔴 ${gameName}</div>`;
 
-      timeHtml = `
-        <div class="timer-display table-timer" 
-             data-start="${start}" 
-             data-limit="${gameTimeMs}"
-             style="font-size:20px; ${isTimeOver ? 'color:#e8837a;' : ''}">
-          ${isTimeOver ? '00:00:00' : fmtTime(remainingMs)}
-        </div>
-        <div class="sub-row"><span>Limit</span><b>${gameTimeMin} min</b></div>
-      `;
-    }
+      if (mode === 'per_minute') {
+        const rate = session.game_type?.price_per_minute || 0;
+        const elapsedMs = Date.now() - start;
+        timeHtml = `
+          <div class="timer-display table-timer"
+               data-start="${start}"
+               data-mode="per_minute"
+               data-rate="${rate}"
+               style="font-size:20px;">
+            ${fmtTime(elapsedMs)}
+          </div>
+          <div class="sub-row"><span>Rate</span><b>${money(rate)}/min</b></div>
+        `;
+      } else {
+        const gameTimeMin = timeToMinutes(session.game_type?.time) || 0;
+        const gameTimeMs = gameTimeMin * 60 * 1000;
+        const remainingMs = Math.max(0, gameTimeMs - (Date.now() - start));
+        isTimeOver = remainingMs <= 0;
+        if (isTimeOver) cardExtraClass += ' time-over';
 
+        timeHtml = `
+          <div class="timer-display table-timer"
+               data-start="${start}"
+               data-limit="${gameTimeMs}"
+               data-mode="fixed"
+               style="font-size:20px; ${isTimeOver ? 'color:#e8837a;' : ''}">
+            ${isTimeOver ? '00:00:00' : fmtTime(remainingMs)}
+          </div>
+          <div class="sub-row"><span>Limit</span><b>${gameTimeMin} min</b></div>
+        `;
+      }
+    }
     return `
       <div class="table-card ${cardExtraClass}" data-table-id="${t.id}">
         <div class="felt-top">
@@ -373,16 +384,22 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Live countdown for tables tab (every 1 second)
-  setInterval(() => {
+   setInterval(() => {
     document.querySelectorAll('.table-timer').forEach(el => {
       const start = parseInt(el.dataset.start);
+      if (!start) return;
+
+      if (el.dataset.mode === 'per_minute') {
+        el.textContent = fmtTime(Date.now() - start);
+        return;
+      }
+
       const limit = parseInt(el.dataset.limit);
-      if (!start || !limit) return;
+      if (!limit) return;
 
       const remainingMs = Math.max(0, limit - (Date.now() - start));
       el.textContent = remainingMs <= 0 ? '00:00:00' : fmtTime(remainingMs);
 
-      // Red color when over
       if (remainingMs <= 0) {
         el.style.color = '#e8837a';
         el.closest('.table-card')?.classList.add('time-over');
@@ -520,6 +537,14 @@ async function loadGameTypes() {
   }
 }
 
+function onBillingModeChange() {
+  const mode = document.getElementById('gt-billing-mode')?.value || 'fixed';
+  const fixed = document.getElementById('gt-fixed-fields');
+  const permin = document.getElementById('gt-permin-fields');
+  if (fixed) fixed.style.display = mode === 'fixed' ? 'block' : 'none';
+  if (permin) permin.style.display = mode === 'per_minute' ? 'block' : 'none';
+}
+
 function renderSettings() {
   const tbody = document.getElementById('settings-rates');
   if (!tbody) return;
@@ -537,13 +562,19 @@ function renderSettings() {
   tbody.innerHTML = gameTypes.map(g => {
     const table = tables.find(t => t.id == g.pool_table_id);
     const tableName = table ? table.name : '—';
+    const priceLabel = g.billing_mode === 'per_minute'
+      ? `${money(g.price_per_minute)}/min`
+      : money(g.price);
+    const timeLabel = g.billing_mode === 'per_minute'
+      ? 'Per min'
+      : (g.time ? timeToMinutes(g.time) + ' min' : '—');
 
     return `
       <tr>
         <td><strong>${tableName}</strong></td>
         <td>${g.game_name}</td>
-        <td>${g.time ? timeToMinutes(g.time) + ' min' : '—'}</td>
-        <td>${money(g.price)}</td>
+        <td>${timeLabel}</td>
+        <td>${priceLabel}</td>
         <td>
           <span class="badge ${g.status == 1 ? 'ok' : 'out'}">
             ${g.status == 1 ? 'Active' : 'Inactive'}
@@ -557,13 +588,17 @@ function renderSettings() {
     `;
   }).join('');
 }
+
 function openAddGameType() {
   document.getElementById('game-type-title').textContent = 'Add Game Type';
   document.getElementById('gt-id').value = '';
   document.getElementById('gt-name').value = '';
   document.getElementById('gt-time').value = '';
   document.getElementById('gt-price').value = '';
+  document.getElementById('gt-price-per-min').value = '';
   document.getElementById('gt-status').value = '1';
+  document.getElementById('gt-billing-mode').value = 'fixed';
+  onBillingModeChange();
 
   const tableSelect = document.getElementById('gt-table');
   tableSelect.innerHTML = '<option value="">-- Select Table --</option>';
@@ -581,9 +616,12 @@ function editGameType(id) {
   document.getElementById('game-type-title').textContent = 'Edit Game Type';
   document.getElementById('gt-id').value = game.id;
   document.getElementById('gt-name').value = game.game_name;
-  document.getElementById('gt-time').value = timeToMinutes(game.time);  // ← yeh change
-  document.getElementById('gt-price').value = game.price;
+  document.getElementById('gt-time').value = timeToMinutes(game.time) || '';
+  document.getElementById('gt-price').value = game.price || '';
+  document.getElementById('gt-price-per-min').value = game.price_per_minute || '';
   document.getElementById('gt-status').value = game.status;
+  document.getElementById('gt-billing-mode').value = game.billing_mode || 'fixed';
+  onBillingModeChange();
 
   const tableSelect = document.getElementById('gt-table');
   tableSelect.innerHTML = '<option value="">-- Select Table --</option>';
@@ -598,17 +636,12 @@ function editGameType(id) {
 async function saveGameType() {
   const id = document.getElementById('gt-id').value;
   const name = document.getElementById('gt-name').value.trim();
-  const time = document.getElementById('gt-time').value;
-  const price = parseInt(document.getElementById('gt-price').value) || 0;
   const status = document.getElementById('gt-status').value;
   const tableId = document.getElementById('gt-table').value;
+  const mode = document.getElementById('gt-billing-mode').value;
 
   if (!name) {
     showError('Please enter Game Name');
-    return;
-  }
-  if (!time) {
-    showError('Please enter Time (minutes)');
     return;
   }
   if (!tableId) {
@@ -618,11 +651,28 @@ async function saveGameType() {
 
   const payload = {
     game_name: name,
-    time: time,
-    price: price,
+    pool_table_id: tableId,
+    billing_mode: mode,
     status: status,
-    pool_table_id: tableId
   };
+
+  if (mode === 'fixed') {
+    const time = parseInt(document.getElementById('gt-time').value) || 0;
+    const price = parseInt(document.getElementById('gt-price').value) || 0;
+    if (time < 1) {
+      showError('Enter valid time in minutes');
+      return;
+    }
+    payload.time = time;
+    payload.price = price;
+  } else {
+    const ppm = parseInt(document.getElementById('gt-price-per-min').value) || 0;
+    if (ppm < 1) {
+      showError('Enter price per minute');
+      return;
+    }
+    payload.price_per_minute = ppm;
+  }
 
   try {
     let res;
@@ -649,9 +699,10 @@ async function saveGameType() {
     if (res.ok) {
       closeModal('game-type-modal');
       await loadGameTypes();
-      showSuccess(id ? 'Game type updated successfully!' : 'Game type added successfully!');
+      showSuccess(id ? 'Game type updated!' : 'Game type added!');
     } else {
-      showError('Failed to save game type');
+      const err = await res.json().catch(() => ({}));
+      showError(err.message || 'Failed to save');
     }
   } catch (e) {
     console.error(e);
@@ -690,7 +741,7 @@ async function deleteGameType(id) {
 function openSetup(tableId) {
 
   const bg = document.getElementById('setup-bill-group-id');
-if (bg) bg.value = '';
+  if (bg) bg.value = '';
   const table = tables.find(t => t.id == tableId);
   if (!table) return;
 
@@ -854,11 +905,39 @@ function renderPlayerOrders(playerNum, player) {
   }
 
   container.innerHTML = orders.map(o => `
-    <div class="order-row">
-      <span>${o.inventory?.item_name || 'Item'} × ${o.quantity}</span>
-      <span>${money(o.total)}</span>
+    <div class="order-row" style="display:flex; align-items:center; gap:8px;">
+      <span style="flex:1">${o.inventory?.item_name || 'Item'} × ${o.quantity}</span>
+      <span style="font-family:'JetBrains Mono'; font-size:12px;">${money(o.total)}</span>
+      <button class="btn btn-sm btn-danger" style="padding:2px 8px; font-size:11px;"
+        onclick="removeOrder(${o.id})" title="Remove item">✕</button>
     </div>
   `).join('');
+}
+
+async function removeOrder(orderId) {
+  const result = await showConfirm('Remove this item? Stock will be restored.');
+  if (!result.isConfirmed) return;
+
+  try {
+    const res = await fetch(`/cueboard/api/orders/${orderId}`, {
+      method: 'DELETE',
+      headers: {
+        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+      }
+    });
+
+    if (res.ok) {
+      showSuccess('Item removed');
+      await openLive(currentTableId);
+      await loadData(); // stock update
+    } else {
+      const err = await res.json();
+      showError(err.message || 'Failed to remove');
+    }
+  } catch (e) {
+    console.error(e);
+    showError('Network error');
+  }
 }
 
 function updateLiveTimer() {
@@ -1011,6 +1090,20 @@ function openEndGame() {
     select.innerHTML += `<option value="${p.id}">${p.player_name}</option>`;
   });
 
+  // Price info (fixed / per minute)
+  const mode = currentSession.game_type?.billing_mode || 'fixed';
+  const info = document.getElementById('end-game-price-info');
+  if (info) {
+    if (mode === 'per_minute') {
+      const start = new Date(currentSession.start_time).getTime();
+      const mins = Math.max(1, Math.ceil((Date.now() - start) / 60000));
+      const rate = currentSession.game_type?.price_per_minute || 0;
+      info.textContent = `Played ${mins} min × ${money(rate)} = ${money(mins * rate)}`;
+    } else {
+      info.textContent = `Fixed price: ${money(currentSession.game_price)}`;
+    }
+  }
+
   const discountInput = document.getElementById('end-discount');
   discountInput.value = 0;
   updateDiscountPreview();
@@ -1021,9 +1114,17 @@ function openEndGame() {
 function updateDiscountPreview() {
   if (!currentSession) return;
   const discAmt = Math.max(0, parseInt(document.getElementById('end-discount').value) || 0);
-  const gamePrice = currentSession.game_price || 0;
-  const finalPrice = Math.max(0, gamePrice - discAmt);
+  const mode = currentSession.game_type?.billing_mode || 'fixed';
+  let gamePrice = currentSession.game_price || 0;
 
+  if (mode === 'per_minute') {
+    const start = new Date(currentSession.start_time).getTime();
+    const mins = Math.max(1, Math.ceil((Date.now() - start) / 60000));
+    const rate = currentSession.game_type?.price_per_minute || 0;
+    gamePrice = mins * rate;
+  }
+
+  const finalPrice = Math.max(0, gamePrice - discAmt);
   const el = document.getElementById('end-discount-preview');
   if (el) {
     el.textContent = discAmt > 0
@@ -1208,10 +1309,10 @@ function renderBilling(data) {
     const total = b.total ?? 0;
     const frames = b.frames_count > 1 ? ` (${b.frames_count} frames)` : '';
     const statusBadge = b.payment_status === 'paid'
-  ? `<span class="badge ok">Paid</span>`
-  : b.payment_status === 'pending'
-    ? `<span class="badge low">Pending</span>`
-    : `<span class="badge out">Unpaid</span>`;
+      ? `<span class="badge ok">Paid</span>`
+      : b.payment_status === 'pending'
+        ? `<span class="badge low">Pending</span>`
+        : `<span class="badge out">Unpaid</span>`;
     const closedAt = b.end_time ? new Date(b.end_time).toLocaleString() : '—';
 
     return `
@@ -1225,9 +1326,9 @@ function renderBilling(data) {
         <td>
           <button class="btn btn-sm btn-outline" onclick="viewBill(${b.id})">View</button>
           ${b.payment_status === 'paid'
-            ? `<button class="btn btn-sm btn-outline" onclick="markUnpaid(${b.id})">Mark Unpaid</button>`
-            : `<button class="btn btn-sm btn-primary" onclick="markPaid(${b.id})">Mark Paid</button>`
-          }
+        ? `<button class="btn btn-sm btn-outline" onclick="markUnpaid(${b.id})">Mark Unpaid</button>`
+        : `<button class="btn btn-sm btn-primary" onclick="markPaid(${b.id})">Mark Paid</button>`
+      }
         </td>
       </tr>
     `;
@@ -1369,24 +1470,84 @@ async function viewBill(id) {
     const actions = document.querySelector('#bill-detail-modal .modal-actions');
     const payId = bill.id;
 
+    const payMethod = bill.payment_method || '';
+    const payNote = bill.payment_note || '';
+
     actions.innerHTML = `
       <div style="width:100%; display:flex; flex-direction:column; gap:10px;">
         <div style="display:flex; gap:8px;">
           <button type="button" class="btn ${status === 'pending' ? 'btn-primary' : 'btn-outline'}" style="flex:1"
-            onclick="setBillPayment(${payId}, 'pending', ${grandTotal})">Pending</button>
+            onclick="showPaymentPanel('pending')">Pending</button>
           <button type="button" class="btn ${status === 'paid' ? 'btn-primary' : 'btn-outline'}" style="flex:1"
-            onclick="setBillPayment(${payId}, 'paid', ${grandTotal})">Paid</button>
+            onclick="showPaymentPanel('paid')">Paid</button>
           <button type="button" class="btn ${status === 'unpaid' ? 'btn-primary' : 'btn-outline'}" style="flex:1"
             onclick="setBillPayment(${payId}, 'unpaid', 0)">Unpaid</button>
         </div>
 
-        <div id="pending-amount-box" style="display:${status === 'pending' ? 'block' : 'none'};">
-          <div class="field" style="margin:0;">
+        <!-- PENDING PANEL -->
+                <div id="pending-panel" style="display:${status === 'pending' ? 'block' : 'none'};">
+          <div class="field" style="margin:0 0 8px;">
             <label>Amount Received (Rs)</label>
             <input type="number" id="bill-amount-paid" value="${paidAmt || ''}" min="0" placeholder="e.g. 500">
           </div>
-          <button type="button" class="btn btn-primary btn-block" style="margin-top:8px;"
-            onclick="savePendingAmount(${payId}, ${grandTotal})">Save Amount</button>
+          <div class="field" style="margin:0 0 8px;">
+            <label>Paid By <span style="color:#e8837a">*</span></label>
+            <div class="pay-method-grid">
+              <label class="pay-method-opt">
+                <input type="radio" name="pay-method-pending" value="cash" ${payMethod === 'cash' ? 'checked' : ''}>
+                <span>Cash</span>
+              </label>
+              <label class="pay-method-opt">
+                <input type="radio" name="pay-method-pending" value="easypaisa" ${payMethod === 'easypaisa' ? 'checked' : ''}>
+                <span>EasyPaisa</span>
+              </label>
+              <label class="pay-method-opt">
+                <input type="radio" name="pay-method-pending" value="jazzcash" ${payMethod === 'jazzcash' ? 'checked' : ''}>
+                <span>JazzCash</span>
+              </label>
+              <label class="pay-method-opt">
+                <input type="radio" name="pay-method-pending" value="bank" ${payMethod === 'bank' ? 'checked' : ''}>
+                <span>Bank</span>
+              </label>
+            </div>
+          </div>
+          <div class="field" style="margin:0 0 8px;">
+            <label>Note (optional)</label>
+            <input type="text" id="bill-payment-note" value="${payNote || ''}" placeholder="e.g. Will pay tomorrow">
+          </div>
+          <button type="button" class="btn btn-primary btn-block"
+            onclick="savePendingAmount(${payId}, ${grandTotal})">Save Pending</button>
+        </div>
+
+        <!-- PAID PANEL -->
+        <div id="paid-panel" style="display:${status === 'paid' ? 'block' : 'none'};">
+          <div class="field" style="margin:0 0 8px;">
+            <label>Paid By <span style="color:#e8837a">*</span></label>
+                        <div class="pay-method-grid">
+              <label class="pay-method-opt">
+                <input type="radio" name="pay-method" value="cash" ${payMethod === 'cash' ? 'checked' : ''}>
+                <span>Cash</span>
+              </label>
+              <label class="pay-method-opt">
+                <input type="radio" name="pay-method" value="easypaisa" ${payMethod === 'easypaisa' ? 'checked' : ''}>
+                <span>EasyPaisa</span>
+              </label>
+              <label class="pay-method-opt">
+                <input type="radio" name="pay-method" value="jazzcash" ${payMethod === 'jazzcash' ? 'checked' : ''}>
+                <span>JazzCash</span>
+              </label>
+              <label class="pay-method-opt">
+                <input type="radio" name="pay-method" value="bank" ${payMethod === 'bank' ? 'checked' : ''}>
+                <span>Bank</span>
+              </label>
+            </div>
+          </div>
+          <div class="field" style="margin:0 0 8px;">
+            <label>Note (optional)</label>
+            <input type="text" id="bill-paid-note" value="${payNote || ''}" placeholder="Optional note">
+          </div>
+          <button type="button" class="btn btn-primary btn-block"
+            onclick="savePaidAmount(${payId}, ${grandTotal})">Confirm Paid</button>
         </div>
 
         <div style="display:flex; gap:8px;">
@@ -1540,7 +1701,7 @@ function renderCalendar() {
   const label = document.getElementById('cal-month-label');
   if (!box) return;
 
-  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   if (label) label.textContent = `${monthNames[calMonth - 1]} ${calYear}`;
 
   const first = new Date(calYear, calMonth - 1, 1);
@@ -1548,7 +1709,7 @@ function renderCalendar() {
   const daysInMonth = new Date(calYear, calMonth, 0).getDate();
   const todayStr = new Date().toISOString().slice(0, 10);
 
-  let html = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
+  let html = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
     .map(d => `<div class="cal-head">${d}</div>`).join('');
 
   for (let i = 0; i < startDay; i++) {
@@ -1556,7 +1717,7 @@ function renderCalendar() {
   }
 
   for (let d = 1; d <= daysInMonth; d++) {
-    const dateStr = `${calYear}-${String(calMonth).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const dateStr = `${calYear}-${String(calMonth).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
     const info = calDaysData[dateStr] || {};
     const rev = info.revenue || 0;
     const has = rev > 0 || (info.expense || 0) > 0;
@@ -1945,53 +2106,58 @@ async function deleteExpense(id) {
     showError('Error deleting');
   }
 }
+function showPaymentPanel(type) {
+  const pending = document.getElementById('pending-panel');
+  const paid = document.getElementById('paid-panel');
+  if (pending) pending.style.display = type === 'pending' ? 'block' : 'none';
+  if (paid) paid.style.display = type === 'paid' ? 'block' : 'none';
+}
+
 async function setBillPayment(id, status, grandTotal) {
-  if (status === 'pending') {
-    const box = document.getElementById('pending-amount-box');
-    if (box) box.style.display = 'block';
-    return;
-  }
-
-  const amount = status === 'paid' ? grandTotal : 0;
-
-  try {
-    const res = await fetch(`/cueboard/api/billing/${id}/payment`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
-      },
-      body: JSON.stringify({
-        payment_status: status,
-        amount_paid: amount
-      })
-    });
-
-    if (res.ok) {
-      showSuccess(status === 'paid' ? 'Marked as Paid' : 'Marked as Unpaid');
-      closeModal('bill-detail-modal');
-      if (typeof loadBilling === 'function') {
-        loadBilling(typeof billingPage !== 'undefined' ? billingPage : 1);
+  // Unpaid direct
+  if (status === 'unpaid') {
+    try {
+      const res = await fetch(`/cueboard/api/billing/${id}/payment`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+        },
+        body: JSON.stringify({
+          payment_status: 'unpaid',
+          amount_paid: 0,
+          payment_method: null,
+          payment_note: null
+        })
+      });
+      if (res.ok) {
+        showSuccess('Marked as Unpaid');
+        closeModal('bill-detail-modal');
+        if (typeof loadBilling === 'function') loadBilling(typeof billingPage !== 'undefined' ? billingPage : 1);
+      } else {
+        showError('Failed to update');
       }
-    } else {
-      showError('Failed to update payment');
+    } catch (e) {
+      console.error(e);
+      showError('Network error');
     }
-  } catch (e) {
-    console.error(e);
-    showError('Network error');
   }
 }
 
 async function savePendingAmount(id, grandTotal) {
   const amount = Math.max(0, parseInt(document.getElementById('bill-amount-paid')?.value) || 0);
+  const note = (document.getElementById('bill-payment-note')?.value || '').trim();
 
   if (amount <= 0) {
     showError('Enter amount received');
     return;
   }
 
+  // Full amount → treat as paid (method still required)
   if (amount >= grandTotal) {
-    return setBillPayment(id, 'paid', grandTotal);
+    showPaymentPanel('paid');
+    showError('Full amount — select payment method and confirm Paid');
+    return;
   }
 
   try {
@@ -2003,18 +2169,90 @@ async function savePendingAmount(id, grandTotal) {
       },
       body: JSON.stringify({
         payment_status: 'pending',
-        amount_paid: amount
+        amount_paid: amount,
+        payment_note: note || null
       })
     });
 
     if (res.ok) {
-      showSuccess('Pending amount saved');
+      showSuccess('Pending saved');
       closeModal('bill-detail-modal');
-      if (typeof loadBilling === 'function') {
-        loadBilling(typeof billingPage !== 'undefined' ? billingPage : 1);
-      }
+      if (typeof loadBilling === 'function') loadBilling(typeof billingPage !== 'undefined' ? billingPage : 1);
     } else {
       showError('Failed to save');
+    }
+  } catch (e) {
+    console.error(e);
+    showError('Network error');
+  }
+}
+
+async function savePaidAmount(id, grandTotal) {
+  const method = document.querySelector('input[name="pay-method"]:checked')?.value;
+  const note = (document.getElementById('bill-paid-note')?.value || '').trim();
+
+  if (!method) {
+    showError('Please select payment method (Cash / EasyPaisa / JazzCash / Bank)');
+    return;
+  }
+
+  try {
+    const res = await fetch(`/cueboard/api/billing/${id}/payment`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+      },
+      body: JSON.stringify({
+        payment_status: 'paid',
+        amount_paid: grandTotal,
+        payment_method: method,
+        payment_note: note || null
+      })
+    });
+
+    if (res.ok) {
+      showSuccess('Marked as Paid (' + method + ')');
+      closeModal('bill-detail-modal');
+      if (typeof loadBilling === 'function') loadBilling(typeof billingPage !== 'undefined' ? billingPage : 1);
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showError(err.message || 'Failed to update');
+    }
+  } catch (e) {
+    console.error(e);
+    showError('Network error');
+  }
+}
+
+async function cancelActiveGame() {
+  if (!currentSession) return;
+
+  const result = await showConfirm(
+    'Cancel this game? All items will be restored to stock and table will become free. This cannot be undone.'
+  );
+  if (!result.isConfirmed) return;
+
+  try {
+    const res = await fetch('/cueboard/api/cancel-game', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+      },
+      body: JSON.stringify({ session_id: currentSession.id })
+    });
+
+    if (res.ok) {
+      showSuccess('Game cancelled');
+      if (timerInterval) clearInterval(timerInterval);
+      currentSession = null;
+      currentTableId = null;
+      await loadData();
+      switchView('tables');
+    } else {
+      const err = await res.json();
+      showError(err.message || 'Failed to cancel');
     }
   } catch (e) {
     console.error(e);
