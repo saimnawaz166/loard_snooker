@@ -1145,7 +1145,6 @@ async function confirmEndGame(startNewFrame = false) {
     return;
   }
 
-  const savedTableId = currentTableId;
   const savedPlayers = (currentSession?.players || []).map(p => p.player_name);
   const savedBillGroup = currentSession?.bill_group_id || null;
 
@@ -1175,11 +1174,11 @@ async function confirmEndGame(startNewFrame = false) {
 
     await loadData();
 
-    if (startNewFrame && savedTableId) {
-      openSetupForNewFrame(savedTableId, savedPlayers, savedBillGroup || finalSession.bill_group_id);
+    if (startNewFrame) {
+      openSetupForNewFrame(savedPlayers, savedBillGroup || finalSession.bill_group_id);
     } else {
       switchView('tables');
-      await viewBill(finalSession.id);   // ← same bill modal
+      await viewBill(finalSession.id);
     }
   } catch (e) {
     console.error(e);
@@ -1187,17 +1186,7 @@ async function confirmEndGame(startNewFrame = false) {
   }
 }
 
-function openSetupForNewFrame(tableId, playerNames = [], billGroupId = null) {
-  const table = tables.find(t => t.id == tableId);
-  if (!table) {
-    switchView('tables');
-    return;
-  }
-
-  document.getElementById('setup-title').textContent = `New Frame — ${table.name} (Same Bill)`;
-  document.getElementById('setup-table-id').value = tableId;
-  document.getElementById('setup-game-type-id').value = '';
-
+function openSetupForNewFrame(playerNames = [], billGroupId = null) {
   // Hidden bill group
   let bg = document.getElementById('setup-bill-group-id');
   if (!bg) {
@@ -1208,12 +1197,61 @@ function openSetupForNewFrame(tableId, playerNames = [], billGroupId = null) {
   }
   bg.value = billGroupId || '';
 
+  document.getElementById('setup-title').textContent = 'New Frame — Same Bill';
+  document.getElementById('setup-table-id').value = '';
+  document.getElementById('setup-game-type-id').value = '';
   document.getElementById('player1-name').value = playerNames[0] || '';
   document.getElementById('player2-name').value = playerNames[1] || '';
 
-  // Game type cards (same as openSetup)
   const container = document.getElementById('setup-game-options');
   container.innerHTML = '';
+
+  // Step 1: free tables
+  const freeTables = tables.filter(t => t.status == 0);
+
+  if (freeTables.length === 0) {
+    container.innerHTML = `<div style="grid-column:1/-1; text-align:center; color:#888; padding:20px;">No free table available</div>`;
+  } else {
+    const hint = document.createElement('div');
+    hint.style.cssText = 'grid-column:1/-1; font-size:13px; color:var(--text-dim); margin-bottom:8px;';
+    hint.textContent = 'Select a table first:';
+    container.appendChild(hint);
+
+    freeTables.forEach(t => {
+      const div = document.createElement('div');
+      div.className = 'game-opt';
+      div.innerHTML = `
+        <div class="gname">${t.name}</div>
+        <div class="grate">Free</div>
+      `;
+      div.onclick = () => {
+        document.getElementById('setup-table-id').value = t.id;
+        document.getElementById('setup-title').textContent = `New Frame — ${t.name} (Same Bill)`;
+        // Step 2: game types for this table
+        showGameTypesForTable(t.id, container);
+      };
+      container.appendChild(div);
+    });
+  }
+
+  switchView('tables');
+  openModal('setup-modal');
+}
+
+function showGameTypesForTable(tableId, container) {
+  container.innerHTML = '';
+
+  const back = document.createElement('div');
+  back.style.cssText = 'grid-column:1/-1; margin-bottom:8px;';
+  back.innerHTML = `<button type="button" class="btn btn-outline btn-sm" id="setup-back-tables">← Change Table</button>`;
+  container.appendChild(back);
+  document.getElementById('setup-back-tables').onclick = () => {
+    const p1 = document.getElementById('player1-name').value;
+    const p2 = document.getElementById('player2-name').value;
+    const bg = document.getElementById('setup-bill-group-id')?.value || null;
+    openSetupForNewFrame([p1, p2], bg);
+  };
+
   const tableGames = gameTypes.filter(g => g.pool_table_id == tableId && g.status == 1);
   const ballSets = [
     ['#c1453a', '#d4a72c', '#2f6f3e'],
@@ -1223,30 +1261,35 @@ function openSetupForNewFrame(tableId, playerNames = [], billGroupId = null) {
   ];
 
   if (tableGames.length === 0) {
-    container.innerHTML = `<div style="grid-column:1/-1; text-align:center; color:#888; padding:20px;">No game types for this table</div>`;
-  } else {
-    tableGames.forEach((g, index) => {
-      const timeMin = timeToMinutes(g.time) || 0;
-      const colors = ballSets[index % ballSets.length];
-      const div = document.createElement('div');
-      div.className = 'game-opt';
-      div.dataset.id = g.id;
-      div.innerHTML = `
-        <div class="balls">${colors.map(c => `<span class="ball-dot" style="background:${c}"></span>`).join('')}</div>
-        <div class="gname">${g.game_name}</div>
-        <div class="grate">${money(g.price)} • ${timeMin} min</div>
-      `;
-      div.onclick = () => {
-        document.querySelectorAll('#setup-game-options .game-opt').forEach(o => o.classList.remove('selected'));
-        div.classList.add('selected');
-        document.getElementById('setup-game-type-id').value = g.id;
-      };
-      container.appendChild(div);
-    });
+    const empty = document.createElement('div');
+    empty.style.cssText = 'grid-column:1/-1; text-align:center; color:#888; padding:20px;';
+    empty.textContent = 'No game types for this table';
+    container.appendChild(empty);
+    return;
   }
 
-  switchView('tables'); // UI base
-  openModal('setup-modal');
+  tableGames.forEach((g, index) => {
+    const mode = g.billing_mode || 'fixed';
+    const label = mode === 'per_minute'
+      ? `${money(g.price_per_minute)}/min`
+      : `${money(g.price)} • ${timeToMinutes(g.time) || 0} min`;
+
+    const colors = ballSets[index % ballSets.length];
+    const div = document.createElement('div');
+    div.className = 'game-opt';
+    div.dataset.id = g.id;
+    div.innerHTML = `
+      <div class="balls">${colors.map(c => `<span class="ball-dot" style="background:${c}"></span>`).join('')}</div>
+      <div class="gname">${g.game_name}</div>
+      <div class="grate">${label}</div>
+    `;
+    div.onclick = () => {
+      document.querySelectorAll('#setup-game-options .game-opt').forEach(o => o.classList.remove('selected'));
+      div.classList.add('selected');
+      document.getElementById('setup-game-type-id').value = g.id;
+    };
+    container.appendChild(div);
+  });
 }
 function timeToMinutes(timeStr) {
   if (!timeStr) return '';
