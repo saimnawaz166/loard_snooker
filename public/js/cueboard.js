@@ -371,6 +371,8 @@ function switchView(view) {
   if (view === 'settings') renderSettings();
   if (view === 'categories') renderCategories();
   if (view === 'expenses') renderExpenses();
+
+  if (view === 'arcade') loadArcade();
 }
 
 /* INIT */
@@ -1647,7 +1649,11 @@ async function renderReports() {
     set('rep-profit-month', data.profit?.month);
     set('rep-profit-year', data.profit?.year);
 
-    // Best selling
+    set('rep-arc-day', data.arcade?.day);
+    set('rep-arc-week', data.arcade?.week);
+    set('rep-arc-month', data.arcade?.month);
+    set('rep-arc-year', data.arcade?.year);
+
     const bestBox = document.getElementById('rep-best-selling');
     if (bestBox) {
       const items = data.best_selling || [];
@@ -1656,7 +1662,6 @@ async function renderReports() {
         : `<div style="color:#888;padding:12px;">No sales yet.</div>`;
     }
 
-    // Low selling
     const lowBox = document.getElementById('rep-low-selling');
     if (lowBox) {
       const items = data.low_selling || [];
@@ -1665,7 +1670,6 @@ async function renderReports() {
         : `<div style="color:#888;padding:12px;">No sales yet.</div>`;
     }
 
-    // Revenue split
     const splitBox = document.getElementById('rep-revenue-split');
     if (splitBox && data.split) {
       const rows = ['day', 'week', 'month', 'year'];
@@ -1673,18 +1677,19 @@ async function renderReports() {
       splitBox.innerHTML = rows.map(k => {
         const g = data.split[k]?.game || 0;
         const s = data.split[k]?.snacks || 0;
+        const a = data.split[k]?.arcade || 0;
         return `
           <div style="margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid var(--border);">
             <div style="font-size:12px; color:var(--brass); margin-bottom:6px; font-weight:600;">${labels[k]}</div>
             <div class="order-row"><span>Table / Game</span><b>${money(g)}</b></div>
             <div class="order-row"><span>Snacks & drinks</span><b>${money(s)}</b></div>
-            <div class="order-row"><span>Total</span><b>${money(g + s)}</b></div>
+            <div class="order-row"><span>Arcade</span><b>${money(a)}</b></div>
+            <div class="order-row"><span>Total</span><b>${money(g + s + a)}</b></div>
           </div>
         `;
       }).join('');
     }
 
-    // Calendar
     if (data.calendar) {
       calYear = data.calendar.year;
       calMonth = data.calendar.month;
@@ -1776,8 +1781,9 @@ async function selectCalDay(dateStr, el) {
     detail.innerHTML = `
       <div style="border-top:1px solid var(--border); padding-top:16px;">
         <h4 style="margin-bottom:12px;">Report — ${dateStr}</h4>
-        <div class="stat-strip" style="grid-template-columns:repeat(4,1fr); margin-bottom:16px;">
+        <div class="stat-strip" style="grid-template-columns:repeat(5,1fr); margin-bottom:16px;">
           <div class="stat-card"><div class="num" style="font-size:18px;">${money(data.revenue)}</div><div class="lbl">Revenue</div></div>
+          <div class="stat-card"><div class="num" style="font-size:18px;">${money(data.arcade || 0)}</div><div class="lbl">Arcade</div></div>
           <div class="stat-card warn"><div class="num" style="font-size:18px;">${money(data.expense)}</div><div class="lbl">Expense</div></div>
           <div class="stat-card"><div class="num" style="font-size:18px;">${money(data.profit)}</div><div class="lbl">Profit</div></div>
           <div class="stat-card"><div class="num" style="font-size:18px;">${data.frames || 0}</div><div class="lbl">Frames</div></div>
@@ -2258,4 +2264,231 @@ async function cancelActiveGame() {
     console.error(e);
     showError('Network error');
   }
+}
+
+
+
+
+
+
+/* ================= ARCADE ================= */
+let arcadePackages = [];
+let arcadeSales = [];
+
+async function loadArcade() {
+  try {
+    const [pkgRes, salesRes] = await Promise.all([
+      fetch('/cueboard/api/arcade/packages'),
+      fetch('/cueboard/api/arcade/sales')
+    ]);
+    arcadePackages = await pkgRes.json();
+    const data = await salesRes.json();
+    arcadeSales = data.sales || [];
+
+    const tEl = document.getElementById('arcade-today-total');
+    const tokEl = document.getElementById('arcade-today-tokens');
+    if (tEl) tEl.textContent = money(data.today_total || 0);
+    if (tokEl) tokEl.textContent = data.today_tokens || 0;
+
+    renderArcadePackages();
+    renderArcadeSales();
+  } catch (e) {
+    console.error('Arcade load failed', e);
+  }
+}
+
+function renderArcadePackages() {
+  const tbody = document.getElementById('arcade-packages-body');
+  if (!tbody) return;
+  if (!arcadePackages.length) {
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#888;padding:20px;">No packages. Add one.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = arcadePackages.map(p => `
+    <tr>
+      <td><strong>${p.name}</strong></td>
+      <td>${p.tokens}</td>
+      <td>${money(p.price)}</td>
+      <td><span class="badge ${p.status == 1 ? 'ok' : 'out'}">${p.status == 1 ? 'Active' : 'Inactive'}</span></td>
+      <td>
+        <button class="btn btn-sm btn-outline" onclick="editArcadePackage(${p.id})">Edit</button>
+        <button class="btn btn-sm btn-danger" onclick="deleteArcadePackage(${p.id})">Delete</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function renderArcadeSales() {
+  const tbody = document.getElementById('arcade-sales-body');
+  if (!tbody) return;
+  if (!arcadeSales.length) {
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:#888;padding:20px;">No sales yet.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = arcadeSales.map(s => {
+    const t = s.sold_at ? new Date(s.sold_at).toLocaleString() : '—';
+    return `
+      <tr>
+        <td style="font-size:12px;">${t}</td>
+        <td>${s.package_name} (${s.tokens}×${s.qty})</td>
+        <td>${s.qty}</td>
+        <td><b>${money(s.total)}</b></td>
+        <td>${s.payment_method || '—'}</td>
+        <td><button class="btn btn-sm btn-danger" onclick="deleteArcadeSale(${s.id})">✕</button></td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function openAddArcadePackage() {
+  document.getElementById('ap-title').textContent = 'Add Package';
+  document.getElementById('ap-id').value = '';
+  document.getElementById('ap-name').value = '';
+  document.getElementById('ap-tokens').value = '5';
+  document.getElementById('ap-price').value = '100';
+  document.getElementById('ap-status').value = '1';
+  openModal('arcade-package-modal');
+}
+
+function editArcadePackage(id) {
+  const p = arcadePackages.find(x => x.id === id);
+  if (!p) return;
+  document.getElementById('ap-title').textContent = 'Edit Package';
+  document.getElementById('ap-id').value = p.id;
+  document.getElementById('ap-name').value = p.name;
+  document.getElementById('ap-tokens').value = p.tokens;
+  document.getElementById('ap-price').value = p.price;
+  document.getElementById('ap-status').value = p.status;
+  openModal('arcade-package-modal');
+}
+
+async function saveArcadePackage() {
+  const id = document.getElementById('ap-id').value;
+  const name = document.getElementById('ap-name').value.trim();
+  const tokens = parseInt(document.getElementById('ap-tokens').value) || 0;
+  const price = parseInt(document.getElementById('ap-price').value) || 0;
+  const status = document.getElementById('ap-status').value;
+
+  if (!name || tokens < 1) {
+    showError('Enter name and tokens');
+    return;
+  }
+
+  const payload = { name, tokens, price, status };
+
+  try {
+    const res = await fetch(id ? `/cueboard/api/arcade/packages/${id}` : '/cueboard/api/arcade/packages', {
+      method: id ? 'PUT' : 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+      },
+      body: JSON.stringify(payload)
+    });
+    if (res.ok) {
+      closeModal('arcade-package-modal');
+      await loadArcade();
+      showSuccess(id ? 'Package updated' : 'Package added');
+    } else {
+      showError('Failed to save');
+    }
+  } catch (e) {
+    showError('Network error');
+  }
+}
+
+async function deleteArcadePackage(id) {
+  const result = await showConfirm('Delete this package?');
+  if (!result.isConfirmed) return;
+  try {
+    const res = await fetch(`/cueboard/api/arcade/packages/${id}`, {
+      method: 'DELETE',
+      headers: { 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '' }
+    });
+    if (res.ok) {
+      await loadArcade();
+      showSuccess('Deleted');
+    } else showError('Failed');
+  } catch (e) { showError('Error'); }
+}
+
+function openSellArcade() {
+  const sel = document.getElementById('as-package');
+  const active = arcadePackages.filter(p => p.status == 1);
+  if (!active.length) {
+    showError('Add an active package first');
+    return;
+  }
+  sel.innerHTML = active.map(p =>
+    `<option value="${p.id}" data-price="${p.price}">${p.name} — ${p.tokens} tokens — ${money(p.price)}</option>`
+  ).join('');
+  document.getElementById('as-qty').value = 1;
+  document.getElementById('as-note').value = '';
+  document.querySelector('input[name="as-pay"][value="cash"]').checked = true;
+  updateArcadeSellPreview();
+  document.getElementById('as-qty').oninput = updateArcadeSellPreview;
+  sel.onchange = updateArcadeSellPreview;
+  openModal('arcade-sell-modal');
+}
+
+function updateArcadeSellPreview() {
+  const sel = document.getElementById('as-package');
+  const opt = sel?.selectedOptions?.[0];
+  const price = parseInt(opt?.dataset?.price) || 0;
+  const qty = Math.max(1, parseInt(document.getElementById('as-qty')?.value) || 1);
+  const el = document.getElementById('as-total-preview');
+  if (el) el.textContent = `Total: ${money(price * qty)}`;
+}
+
+async function saveArcadeSale() {
+  const packageId = document.getElementById('as-package').value;
+  const qty = Math.max(1, parseInt(document.getElementById('as-qty').value) || 1);
+  const method = document.querySelector('input[name="as-pay"]:checked')?.value;
+  const note = (document.getElementById('as-note').value || '').trim();
+
+  if (!packageId || !method) {
+    showError('Select package and payment method');
+    return;
+  }
+
+  try {
+    const res = await fetch('/cueboard/api/arcade/sales', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+      },
+      body: JSON.stringify({
+        arcade_package_id: packageId,
+        qty,
+        payment_method: method,
+        note: note || null
+      })
+    });
+    if (res.ok) {
+      closeModal('arcade-sell-modal');
+      await loadArcade();
+      showSuccess('Tokens sold');
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showError(err.message || 'Failed');
+    }
+  } catch (e) {
+    showError('Network error');
+  }
+}
+
+async function deleteArcadeSale(id) {
+  const result = await showConfirm('Delete this sale?');
+  if (!result.isConfirmed) return;
+  try {
+    const res = await fetch(`/cueboard/api/arcade/sales/${id}`, {
+      method: 'DELETE',
+      headers: { 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '' }
+    });
+    if (res.ok) {
+      await loadArcade();
+      showSuccess('Sale deleted');
+    } else showError('Failed');
+  } catch (e) { showError('Error'); }
 }

@@ -68,6 +68,18 @@ Route::middleware('auth')->group(function () {
 
         Route::delete('/api/orders/{orderId}', [CueboardController::class, 'removeOrder']);
         Route::post('/api/cancel-game', [CueboardController::class, 'cancelGame']);
+
+
+
+        // Arcade
+        Route::get('/api/arcade/packages', [CueboardController::class, 'getArcadePackages']);
+        Route::post('/api/arcade/packages', [CueboardController::class, 'storeArcadePackage']);
+        Route::put('/api/arcade/packages/{id}', [CueboardController::class, 'updateArcadePackage']);
+        Route::delete('/api/arcade/packages/{id}', [CueboardController::class, 'deleteArcadePackage']);
+
+        Route::get('/api/arcade/sales', [CueboardController::class, 'getArcadeSales']);
+        Route::post('/api/arcade/sales', [CueboardController::class, 'storeArcadeSale']);
+        Route::delete('/api/arcade/sales/{id}', [CueboardController::class, 'deleteArcadeSale']);
     });
 });
 

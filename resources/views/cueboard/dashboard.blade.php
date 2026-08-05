@@ -43,4 +43,5 @@
     @include('cueboard.profile')
     @include('cueboard.categories')
     @include('cueboard.expenses')
+    @include('cueboard.arcade')
 @endsection

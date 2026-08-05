@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\ArcadePackage;
+use App\Models\ArcadeSale;
 use App\Models\Expense;
 use App\Models\Inventory;
 use App\Models\InventoryCategory;
@@ -581,7 +583,6 @@ class CueboardController extends Controller
         $monthStart = $now->copy()->startOfMonth();
         $yearStart = $now->copy()->startOfYear();
 
-        // Helper: player totals from completed sessions in range
         $revenueBetween = function ($from, $to = null) {
             $q = PoolGameSessionPlayer::whereHas('session', function ($s) use ($from, $to) {
                 $s->where('status', 'completed')
@@ -601,17 +602,29 @@ class CueboardController extends Controller
             return (int) $q->sum('amount');
         };
 
-        $revDay   = $revenueBetween($today);
-        $revWeek  = $revenueBetween($weekStart);
-        $revMonth = $revenueBetween($monthStart);
-        $revYear  = $revenueBetween($yearStart);
+        $arcadeBetween = function ($from, $to = null) {
+            $q = ArcadeSale::where('sold_at', '>=', $from);
+            if ($to) {
+                $q->where('sold_at', '<=', $to);
+            }
+            return (int) $q->sum('total');
+        };
+
+        $arcDay   = $arcadeBetween($today);
+        $arcWeek  = $arcadeBetween($weekStart);
+        $arcMonth = $arcadeBetween($monthStart);
+        $arcYear  = $arcadeBetween($yearStart);
+
+        $revDay   = $revenueBetween($today) + $arcDay;
+        $revWeek  = $revenueBetween($weekStart) + $arcWeek;
+        $revMonth = $revenueBetween($monthStart) + $arcMonth;
+        $revYear  = $revenueBetween($yearStart) + $arcYear;
 
         $expDay   = $expenseBetween($today);
         $expWeek  = $expenseBetween($weekStart);
         $expMonth = $expenseBetween($monthStart);
         $expYear  = $expenseBetween($yearStart);
 
-        // Best / Low selling items
         $itemSales = PoolGameSessionOrder::select(
             'inventory_id',
             DB::raw('SUM(quantity) as total_sold')
@@ -629,24 +642,7 @@ class CueboardController extends Controller
         $bestSelling = $itemSales->take(3)->values();
         $lowSelling  = $itemSales->sortBy('sold')->take(3)->values();
 
-        // Revenue split helper (game_price sum vs orders sum) for period
-        $splitBetween = function ($from) {
-            $game = (int) PoolGameSession::where('status', 'completed')
-                ->where('end_time', '>=', $from)
-                ->sum(DB::raw('COALESCE(discounted_game_price, game_price)'));
-
-            $snacks = (int) PoolGameSessionOrder::whereHas('session', function ($s) use ($from) {
-                $s->where('status', 'completed')->where('end_time', '>=', $from);
-            })->sum('total');
-
-            // Fallback if discounted_game_price column missing:
-            // $game = (int) PoolGameSession::where(...)->sum('game_price');
-
-            return ['game' => $game, 'snacks' => $snacks];
-        };
-
-        // If discounted_game_price may not exist, safer:
-        $splitBetween = function ($from) {
+        $splitBetween = function ($from) use ($arcadeBetween) {
             $sessions = PoolGameSession::where('status', 'completed')
                 ->where('end_time', '>=', $from)
                 ->get();
@@ -660,17 +656,22 @@ class CueboardController extends Controller
                 $sessions->pluck('id')
             )->sum('total');
 
-            return ['game' => (int) $game, 'snacks' => $snacks];
+            $arcade = $arcadeBetween($from);
+
+            return [
+                'game'   => (int) $game,
+                'snacks' => $snacks,
+                'arcade' => $arcade,
+            ];
         };
 
-        // Calendar month data (optional query param)
         $calYear  = (int) ($request->get('cal_year') ?: $now->year);
         $calMonth = (int) ($request->get('cal_month') ?: $now->month);
         $calStart = Carbon::create($calYear, $calMonth, 1)->startOfDay();
         $calEnd   = $calStart->copy()->endOfMonth();
 
         $dailyMap = [];
-        // Revenue per day
+
         $sessions = PoolGameSession::with('players')
             ->where('status', 'completed')
             ->whereBetween('end_time', [$calStart, $calEnd])
@@ -686,6 +687,13 @@ class CueboardController extends Controller
         foreach ($exps as $e) {
             $d = Carbon::parse($e->expense_date)->format('Y-m-d');
             $dailyMap[$d]['expense'] = ($dailyMap[$d]['expense'] ?? 0) + $e->amount;
+        }
+
+        $arcSales = ArcadeSale::whereBetween('sold_at', [$calStart, $calEnd])->get();
+        foreach ($arcSales as $a) {
+            $d = Carbon::parse($a->sold_at)->format('Y-m-d');
+            $dailyMap[$d]['revenue'] = ($dailyMap[$d]['revenue'] ?? 0) + (int) $a->total;
+            $dailyMap[$d]['arcade']  = ($dailyMap[$d]['arcade'] ?? 0) + (int) $a->total;
         }
 
         return response()->json([
@@ -706,6 +714,12 @@ class CueboardController extends Controller
                 'week' => $revWeek - $expWeek,
                 'month' => $revMonth - $expMonth,
                 'year' => $revYear - $expYear,
+            ],
+            'arcade' => [
+                'day' => $arcDay,
+                'week' => $arcWeek,
+                'month' => $arcMonth,
+                'year' => $arcYear,
             ],
             'best_selling' => $bestSelling,
             'low_selling'  => $lowSelling,
@@ -921,5 +935,103 @@ class CueboardController extends Controller
             DB::rollBack();
             return response()->json(['message' => 'Failed to cancel game', 'error' => $e->getMessage()], 500);
         }
+    }
+
+
+
+
+    public function getArcadePackages()
+    {
+        return response()->json(
+            ArcadePackage::orderBy('tokens')->get()
+        );
+    }
+
+    public function storeArcadePackage(Request $request)
+    {
+        $validated = $request->validate([
+            'name'   => 'required|string|max:100',
+            'tokens' => 'required|integer|min:1',
+            'price'  => 'required|integer|min:0',
+            'status' => 'nullable|boolean',
+        ]);
+        $validated['status'] = $request->status ?? 1;
+        $pkg = ArcadePackage::create($validated);
+        return response()->json($pkg, 201);
+    }
+
+    public function updateArcadePackage(Request $request, $id)
+    {
+        $pkg = ArcadePackage::findOrFail($id);
+        $validated = $request->validate([
+            'name'   => 'required|string|max:100',
+            'tokens' => 'required|integer|min:1',
+            'price'  => 'required|integer|min:0',
+            'status' => 'nullable|boolean',
+        ]);
+        $pkg->update($validated);
+        return response()->json($pkg);
+    }
+
+    public function deleteArcadePackage($id)
+    {
+        ArcadePackage::findOrFail($id)->delete();
+        return response()->json(['message' => 'Deleted']);
+    }
+
+    // ================= ARCADE SALES =================
+    public function getArcadeSales(Request $request)
+    {
+        $sales = ArcadeSale::orderByDesc('sold_at')
+            ->orderByDesc('id')
+            ->limit(100)
+            ->get();
+
+        $todayTotal = ArcadeSale::whereDate('sold_at', today())->sum('total');
+        $todayTokens = ArcadeSale::whereDate('sold_at', today())->sum(DB::raw('tokens * qty'));
+
+        return response()->json([
+            'sales' => $sales,
+            'today_total' => (int) $todayTotal,
+            'today_tokens' => (int) $todayTokens,
+        ]);
+    }
+
+    public function storeArcadeSale(Request $request)
+    {
+        $validated = $request->validate([
+            'arcade_package_id' => 'required|exists:arcade_packages,id',
+            'qty'               => 'required|integer|min:1',
+            'payment_method'    => 'required|in:cash,easypaisa,jazzcash,bank',
+            'note'              => 'nullable|string|max:255',
+        ]);
+
+        $pkg = ArcadePackage::findOrFail($validated['arcade_package_id']);
+        if ($pkg->status != 1) {
+            return response()->json(['message' => 'Package inactive'], 422);
+        }
+
+        $qty = (int) $validated['qty'];
+        $total = $pkg->price * $qty;
+
+        $sale = ArcadeSale::create([
+            'arcade_package_id' => $pkg->id,
+            'package_name'      => $pkg->name,
+            'tokens'            => $pkg->tokens,
+            'qty'               => $qty,
+            'unit_price'        => $pkg->price,
+            'total'             => $total,
+            'payment_method'    => $validated['payment_method'],
+            'note'              => $validated['note'] ?? null,
+            'sold_at'           => now(),
+        ]);
+
+        return response()->json($sale, 201);
+    }
+
+    public function deleteArcadeSale($id)
+    {
+        ArcadeSale::findOrFail($id)->delete();
+        return response()->json(['message' => 'Deleted']);
     }
 }

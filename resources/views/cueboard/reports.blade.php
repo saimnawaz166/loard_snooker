@@ -30,6 +30,26 @@
     <div class="stat-card"><div class="num" id="rep-profit-year">Rs 0</div><div class="lbl">Yearly Profit</div></div>
   </div>
 
+    <!-- Row 4: Arcade -->
+  <div class="stat-strip" style="margin-top:14px;">
+    <div class="stat-card">
+      <div class="num" id="rep-arc-day">Rs 0</div>
+      <div class="lbl">Arcade Daily</div>
+    </div>
+    <div class="stat-card">
+      <div class="num" id="rep-arc-week">Rs 0</div>
+      <div class="lbl">Arcade Weekly</div>
+    </div>
+    <div class="stat-card">
+      <div class="num" id="rep-arc-month">Rs 0</div>
+      <div class="lbl">Arcade Monthly</div>
+    </div>
+    <div class="stat-card">
+      <div class="num" id="rep-arc-year">Rs 0</div>
+      <div class="lbl">Arcade Yearly</div>
+    </div>
+  </div>
+
   <div class="grid-2" style="margin-top:24px;">
     <div class="panel">
       <h4>Best Selling Items (Top 3)</h4>

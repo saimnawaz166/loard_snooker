@@ -9,6 +9,7 @@
   <nav class="side-nav">
     <button class="active" data-view="dashboard"><span class="ico">▦</span> Dashboard</button>
     <button data-view="tables"><span class="ico">●</span> Tables</button>
+    <button data-view="arcade"><span class="ico">🎮</span> Arcade</button>
     <button data-view="billing"><span class="ico">🧾</span> Billing History</button>
     <button data-view="categories"><span class="ico">🏷</span>Stock Categories</button>
     <button data-view="stock"><span class="ico">▤</span> Stock &amp; Inventory <span class="side-badge" id="nav-lowstock">2</span></button>

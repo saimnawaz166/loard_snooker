@@ -293,3 +293,72 @@
     </div>
   </div>
 </div>
+
+
+
+
+<!-- ARCADE PACKAGE MODAL -->
+<div class="modal-backdrop" id="arcade-package-modal">
+  <div class="modal">
+    <h3 id="ap-title">Add Package</h3>
+    <input type="hidden" id="ap-id">
+    <div class="field">
+      <label>Name</label>
+      <input type="text" id="ap-name" placeholder="e.g. 5 Tokens">
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label>Tokens</label>
+        <input type="number" id="ap-tokens" min="1" placeholder="5">
+      </div>
+      <div class="field">
+        <label>Price (Rs)</label>
+        <input type="number" id="ap-price" min="0" placeholder="100">
+      </div>
+    </div>
+    <div class="field">
+      <label>Status</label>
+      <select id="ap-status">
+        <option value="1">Active</option>
+        <option value="0">Inactive</option>
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" style="flex:1" onclick="closeModal('arcade-package-modal')">Cancel</button>
+      <button class="btn btn-primary" style="flex:1" onclick="saveArcadePackage()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- SELL TOKENS MODAL -->
+<div class="modal-backdrop" id="arcade-sell-modal">
+  <div class="modal">
+    <h3>Sell Tokens</h3>
+    <div class="field">
+      <label>Package</label>
+      <select id="as-package"></select>
+    </div>
+    <div class="field">
+      <label>Quantity (packages)</label>
+      <input type="number" id="as-qty" value="1" min="1">
+    </div>
+    <div class="field">
+      <label>Paid By <span style="color:#e8837a">*</span></label>
+      <div class="pay-method-grid">
+        <label class="pay-method-opt"><input type="radio" name="as-pay" value="cash" checked><span>Cash</span></label>
+        <label class="pay-method-opt"><input type="radio" name="as-pay" value="easypaisa"><span>EasyPaisa</span></label>
+        <label class="pay-method-opt"><input type="radio" name="as-pay" value="jazzcash"><span>JazzCash</span></label>
+        <label class="pay-method-opt"><input type="radio" name="as-pay" value="bank"><span>Bank</span></label>
+      </div>
+    </div>
+    <div class="field">
+      <label>Note (optional)</label>
+      <input type="text" id="as-note" placeholder="Optional">
+    </div>
+    <div class="sub" id="as-total-preview" style="margin:8px 0; color:var(--brass); font-weight:600;"></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" style="flex:1" onclick="closeModal('arcade-sell-modal')">Cancel</button>
+      <button class="btn btn-primary" style="flex:1" onclick="saveArcadeSale()">Sell</button>
+    </div>
+  </div>
+</div>
