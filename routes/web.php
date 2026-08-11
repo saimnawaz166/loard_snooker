@@ -80,6 +80,19 @@ Route::middleware('auth')->group(function () {
         Route::get('/api/arcade/sales', [CueboardController::class, 'getArcadeSales']);
         Route::post('/api/arcade/sales', [CueboardController::class, 'storeArcadeSale']);
         Route::delete('/api/arcade/sales/{id}', [CueboardController::class, 'deleteArcadeSale']);
+        Route::post('/api/billing/player/{playerId}/payment', [CueboardController::class, 'updatePlayerPayment']);
+        Route::post('/api/billing/{id}/player-payment', [CueboardController::class, 'updateBillPlayerPayment']);
+
+
+
+        Route::get('/api/shop/history', [CueboardController::class, 'getShopHistory']);
+        Route::post('/api/shop/sale', [CueboardController::class, 'storeShopSale']);
+        Route::delete('/api/shop/sale/{id}', [CueboardController::class, 'deleteShopSale']);
+
+
+        Route::post('/api/billing/unlock', [CueboardController::class, 'unlockBilling']);
+        Route::get('/api/billing/unlock-status', [CueboardController::class, 'billingUnlockStatus']);
+        Route::post('/api/billing/lock', [CueboardController::class, 'lockBilling']);
     });
 });
 

@@ -12,6 +12,7 @@ use App\Models\PoolGameSessionOrder;
 use App\Models\PoolGameSessionPlayer;
 use App\Models\PoolGameType;
 use App\Models\PoolTable;
+use App\Models\ShopHistory;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -391,6 +392,7 @@ class CueboardController extends Controller
     // Billing History (with pagination + search)
     public function getBillingHistory(Request $request)
     {
+        $this->assertBillingUnlocked();
         $search = $request->get('search');
         $status = $request->get('payment_status');
 
@@ -411,23 +413,31 @@ class CueboardController extends Controller
             $first = $group->sortBy('start_time')->first();
             $last  = $group->sortByDesc('end_time')->first();
 
-            $total = $group->sum(fn($s) => $s->players->sum('total_amount'));
+            $allPlayers = $group->flatMap(fn($s) => $s->players);
+            $total = (int) $allPlayers->sum('total_amount');
+            $amountPaid = (int) $allPlayers->sum('amount_paid');
 
-            $statuses = $group->pluck('payment_status')->unique();
-            if ($statuses->every(fn($s) => $s === 'paid')) {
+            $isPlayerSettled = function ($p) {
+                if ((int) ($p->total_amount ?? 0) <= 0) {
+                    return true; // zero bill = paid
+                }
+                return ($p->payment_status ?? 'unpaid') === 'paid';
+            };
+
+            if ($allPlayers->isEmpty()) {
+                $payStatus = 'unpaid';
+            } elseif ($allPlayers->every($isPlayerSettled)) {
                 $payStatus = 'paid';
-            } elseif ($statuses->contains('pending') || $group->sum('amount_paid') > 0) {
+            } elseif (
+                $allPlayers->contains(fn($p) => in_array($p->payment_status ?? 'unpaid', ['pending', 'paid'], true))
+                || $amountPaid > 0
+            ) {
                 $payStatus = 'pending';
             } else {
                 $payStatus = 'unpaid';
             }
 
-            $amountPaid = (int) $group->max('amount_paid');
-
-            $playerNames = $group->flatMap(fn($s) => $s->players->pluck('player_name'))
-                ->unique()
-                ->values()
-                ->implode(' / ');
+            $playerNames = $allPlayers->pluck('player_name')->unique()->values()->implode(' / ');
 
             $gameNames = $group->map(fn($s) => $s->gameType?->game_name)
                 ->filter()
@@ -461,9 +471,9 @@ class CueboardController extends Controller
         $slice = $bills->forPage($page, $perPage)->values();
 
         return response()->json([
-            'data'         => $slice,
-            'current_page' => $page,
-            'last_page'    => max(1, (int) ceil($total / $perPage)),
+            'data'          => $slice,
+            'current_page'  => $page,
+            'last_page'     => max(1, (int) ceil($total / $perPage)),
             'prev_page_url' => $page > 1 ? true : null,
             'next_page_url' => $page * $perPage < $total ? true : null,
         ]);
@@ -472,6 +482,7 @@ class CueboardController extends Controller
     // Single bill details
     public function getBillDetails($id)
     {
+        $this->assertBillingUnlocked();
         $session = PoolGameSession::findOrFail($id);
         $groupId = $session->bill_group_id;
 
@@ -486,13 +497,28 @@ class CueboardController extends Controller
             ->orderBy('start_time')
             ->get();
 
-        $allPaid    = $sessions->every(fn($s) => $s->payment_status === 'paid');
-        $anyPending = $sessions->contains(fn($s) => $s->payment_status === 'pending');
-        $amountPaid = (int) $sessions->max('amount_paid');
+        $allPlayers = $sessions->flatMap(fn($s) => $s->players);
+        $amountPaid = (int) $allPlayers->sum('amount_paid');
 
-        $payStatus = $allPaid
-            ? 'paid'
-            : (($anyPending || $amountPaid > 0) ? 'pending' : 'unpaid');
+        $isPlayerSettled = function ($p) {
+            if ((int) ($p->total_amount ?? 0) <= 0) {
+                return true; // zero bill = paid
+            }
+            return ($p->payment_status ?? 'unpaid') === 'paid';
+        };
+
+        if ($allPlayers->isEmpty()) {
+            $payStatus = 'unpaid';
+        } elseif ($allPlayers->every($isPlayerSettled)) {
+            $payStatus = 'paid';
+        } elseif (
+            $allPlayers->contains(fn($p) => in_array($p->payment_status ?? 'unpaid', ['pending', 'paid'], true))
+            || $amountPaid > 0
+        ) {
+            $payStatus = 'pending';
+        } else {
+            $payStatus = 'unpaid';
+        }
 
         return response()->json([
             'bill_group_id'  => $groupId,
@@ -503,11 +529,8 @@ class CueboardController extends Controller
             'table'          => $sessions->first()?->table,
             'start_time'     => $sessions->first()?->start_time,
             'end_time'       => $sessions->last()?->end_time,
-            'payment_method' => $sessions->first()?->payment_method,
-            'payment_note'   => $sessions->first()?->payment_note,
         ]);
     }
-
     // Mark as Paid
     public function markAsPaid($id)
     {
@@ -1033,5 +1056,289 @@ class CueboardController extends Controller
     {
         ArcadeSale::findOrFail($id)->delete();
         return response()->json(['message' => 'Deleted']);
+    }
+
+    public function updatePlayerPayment(Request $request, $playerId)
+    {
+        $validated = $request->validate([
+            'payment_status' => 'required|in:unpaid,pending,paid',
+            'amount_paid'    => 'nullable|integer|min:0',
+            'payment_method' => 'nullable|in:cash,easypaisa,jazzcash,bank',
+            'payment_note'   => 'nullable|string|max:255',
+        ]);
+
+        if ($validated['payment_status'] === 'paid' && empty($validated['payment_method'])) {
+            return response()->json(['message' => 'Payment method required when Paid'], 422);
+        }
+
+        $player = PoolGameSessionPlayer::findOrFail($playerId);
+        $total = (int) $player->total_amount;
+
+        $status = $validated['payment_status'];
+        $amountPaid = (int) ($validated['amount_paid'] ?? 0);
+        $method = $validated['payment_method'] ?? null;
+        $note = $validated['payment_note'] ?? null;
+
+        if ($status === 'unpaid') {
+            $amountPaid = 0;
+            $method = null;
+        } elseif ($status === 'paid') {
+            $amountPaid = $total;
+        } elseif ($status === 'pending') {
+            if ($amountPaid <= 0) {
+                return response()->json(['message' => 'Enter amount received'], 422);
+            }
+            if ($amountPaid >= $total) {
+                $status = 'paid';
+                $amountPaid = $total;
+                if (empty($method)) {
+                    return response()->json(['message' => 'Full amount — select payment method'], 422);
+                }
+            }
+        }
+
+        $player->update([
+            'payment_status' => $status,
+            'amount_paid'    => $amountPaid,
+            'payment_method' => $method,
+            'payment_note'   => $note,
+        ]);
+
+        return response()->json($player);
+    }
+
+
+    public function updateBillPlayerPayment(Request $request, $id)
+    {
+        $this->assertBillingUnlocked();
+        $validated = $request->validate([
+            'player_name'    => 'required|string|max:100',
+            'payment_status' => 'required|in:unpaid,pending,paid',
+            'amount_paid'    => 'nullable|integer|min:0',
+            'payment_method' => 'nullable|in:cash,easypaisa,jazzcash,bank',
+            'payment_note'   => 'nullable|string|max:255',
+        ]);
+
+        if ($validated['payment_status'] === 'paid' && empty($validated['payment_method'])) {
+            return response()->json(['message' => 'Payment method required when Paid'], 422);
+        }
+
+        $session = PoolGameSession::findOrFail($id);
+        $groupId = $session->bill_group_id;
+
+        $sessionIds = PoolGameSession::where('status', 'completed')
+            ->when($groupId, fn($q) => $q->where('bill_group_id', $groupId))
+            ->when(!$groupId, fn($q) => $q->where('id', $id))
+            ->pluck('id');
+
+        $players = PoolGameSessionPlayer::whereIn('pool_game_session_id', $sessionIds)
+            ->where('player_name', $validated['player_name'])
+            ->get();
+
+        if ($players->isEmpty()) {
+            return response()->json(['message' => 'Player not found on this bill'], 404);
+        }
+
+        $playerTotal = (int) $players->sum('total_amount');
+        $status = $validated['payment_status'];
+        $amountPaid = (int) ($validated['amount_paid'] ?? 0);
+        $method = $validated['payment_method'] ?? null;
+        $note = $validated['payment_note'] ?? null;
+
+        // Zero bill → always paid
+        if ($playerTotal <= 0) {
+            foreach ($players as $p) {
+                $p->update([
+                    'payment_status' => 'paid',
+                    'amount_paid'    => 0,
+                    'payment_method' => $method,
+                    'payment_note'   => $note,
+                ]);
+            }
+            return response()->json([
+                'message' => 'Updated',
+                'player_name' => $validated['player_name'],
+                'payment_status' => 'paid',
+                'amount_paid' => 0,
+                'player_total' => 0,
+            ]);
+        }
+
+        if ($status === 'unpaid') {
+            $amountPaid = 0;
+            $method = null;
+        } elseif ($status === 'paid') {
+            $amountPaid = $playerTotal;
+        } elseif ($status === 'pending') {
+            if ($amountPaid <= 0) {
+                return response()->json(['message' => 'Enter amount received'], 422);
+            }
+            if ($amountPaid >= $playerTotal) {
+                $status = 'paid';
+                $amountPaid = $playerTotal;
+                if (empty($method)) {
+                    return response()->json(['message' => 'Full amount — select payment method'], 422);
+                }
+            }
+        }
+
+        $first = true;
+        foreach ($players as $p) {
+            $p->update([
+                'payment_status' => $status,
+                'amount_paid'    => $first ? $amountPaid : 0,
+                'payment_method' => $method,
+                'payment_note'   => $note,
+            ]);
+            $first = false;
+        }
+
+        return response()->json([
+            'message' => 'Updated',
+            'player_name' => $validated['player_name'],
+            'payment_status' => $status,
+            'amount_paid' => $amountPaid,
+            'player_total' => $playerTotal,
+        ]);
+    }
+
+
+
+    public function getShopHistory()
+    {
+        $list = ShopHistory::orderByDesc('sold_at')->orderByDesc('id')->limit(100)->get();
+        $todayTotal = (int) ShopHistory::whereDate('sold_at', today())->sum('total');
+
+        return response()->json([
+            'sales' => $list,
+            'today_total' => $todayTotal,
+        ]);
+    }
+
+    public function storeShopSale(Request $request)
+    {
+        $validated = $request->validate([
+            'customer_name'   => 'nullable|string|max:100',
+            'payment_method'  => 'nullable|in:cash,easypaisa,jazzcash,bank',
+            'items'           => 'required|array|min:1',
+            'items.*.inventory_id' => 'required|exists:inventories,id',
+            'items.*.quantity'     => 'required|integer|min:1',
+        ]);
+
+        DB::beginTransaction();
+        try {
+            $lines = [];
+            $grand = 0;
+
+            foreach ($validated['items'] as $row) {
+                $inv = Inventory::lockForUpdate()->findOrFail($row['inventory_id']);
+                $qty = (int) $row['quantity'];
+
+                if ($inv->quantity < $qty) {
+                    DB::rollBack();
+                    return response()->json([
+                        'message' => "Not enough stock: {$inv->item_name} (have {$inv->quantity})",
+                    ], 422);
+                }
+
+                $lineTotal = $inv->price * $qty;
+                $grand += $lineTotal;
+
+                $lines[] = [
+                    'inventory_id' => $inv->id,
+                    'item_name'    => $inv->item_name,
+                    'qty'          => $qty,
+                    'unit_price'   => (int) $inv->price,
+                    'total'        => $lineTotal,
+                ];
+
+                $inv->decrement('quantity', $qty);
+            }
+
+            $sale = ShopHistory::create([
+                'customer_name'  => $validated['customer_name'] ?? null,
+                'total'          => $grand,
+                'items'          => $lines,
+                'payment_method' => $validated['payment_method'] ?? 'cash',
+                'sold_at'        => now(),
+            ]);
+
+            DB::commit();
+            return response()->json($sale, 201);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['message' => 'Failed', 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    public function deleteShopSale($id)
+    {
+        $sale = ShopHistory::findOrFail($id);
+
+        DB::beginTransaction();
+        try {
+            foreach ($sale->items ?? [] as $line) {
+                if (!empty($line['inventory_id'])) {
+                    Inventory::where('id', $line['inventory_id'])
+                        ->increment('quantity', (int) ($line['qty'] ?? 0));
+                }
+            }
+            $sale->delete();
+            DB::commit();
+            return response()->json(['message' => 'Deleted']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['message' => 'Failed'], 500);
+        }
+    }
+
+    public function unlockBilling(Request $request)
+    {
+        $request->validate([
+            'password' => 'required|string',
+        ]);
+
+        $expected = config('cueboard.billing_password', env('BILLING_PASSWORD'));
+
+        if (!hash_equals((string) $expected, (string) $request->password)) {
+            return response()->json(['message' => 'Wrong password'], 403);
+        }
+
+        session(['billing_unlocked' => true, 'billing_unlocked_at' => now()->timestamp]);
+
+        return response()->json(['message' => 'Unlocked', 'unlocked' => true]);
+    }
+
+    public function billingUnlockStatus()
+    {
+        $ok = (bool) session('billing_unlocked');
+        // optional: 30 min timeout
+        $at = session('billing_unlocked_at');
+        if ($ok && $at && (now()->timestamp - (int) $at) > 1800) {
+            session()->forget(['billing_unlocked', 'billing_unlocked_at']);
+            $ok = false;
+        }
+
+        return response()->json(['unlocked' => $ok]);
+    }
+
+    public function lockBilling()
+    {
+        session()->forget(['billing_unlocked', 'billing_unlocked_at']);
+        return response()->json(['message' => 'Locked']);
+    }
+
+    /** Call at start of billing APIs */
+    protected function assertBillingUnlocked()
+    {
+        $ok = (bool) session('billing_unlocked');
+        $at = session('billing_unlocked_at');
+        if ($ok && $at && (now()->timestamp - (int) $at) > 1800) {
+            session()->forget(['billing_unlocked', 'billing_unlocked_at']);
+            $ok = false;
+        }
+        if (!$ok) {
+            abort(response()->json(['message' => 'Billing locked', 'locked' => true], 403));
+        }
     }
 }

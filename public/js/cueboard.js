@@ -366,13 +366,15 @@ function switchView(view) {
   if (view === 'dashboard') renderDashboard();
   if (view === 'tables') renderTables();
   if (view === 'stock') renderStock();
-  if (view === 'billing') loadBilling(1);
+  // if (view === 'billing') loadBilling(1);
+  if (view === 'billing') openBillingProtected();
   if (view === 'reports') renderReports();
   if (view === 'settings') renderSettings();
   if (view === 'categories') renderCategories();
   if (view === 'expenses') renderExpenses();
 
   if (view === 'arcade') loadArcade();
+  if (view === 'shop') loadShop();
 }
 
 /* INIT */
@@ -1370,10 +1372,6 @@ function renderBilling(data) {
         <td>${closedAt}</td>
         <td>
           <button class="btn btn-sm btn-outline" onclick="viewBill(${b.id})">View</button>
-          ${b.payment_status === 'paid'
-        ? `<button class="btn btn-sm btn-outline" onclick="markUnpaid(${b.id})">Mark Unpaid</button>`
-        : `<button class="btn btn-sm btn-primary" onclick="markPaid(${b.id})">Mark Paid</button>`
-      }
         </td>
       </tr>
     `;
@@ -1402,9 +1400,10 @@ async function viewBill(id) {
     const bill = await res.json();
     const sessions = bill.sessions || [bill];
     const tableName = bill.table?.name || sessions[0]?.table?.name || 'Table';
+    const billId = bill.id;
 
     const status = bill.payment_status || 'unpaid';
-    const paidAmt = bill.amount_paid ?? sessions[0]?.amount_paid ?? 0;
+    const paidAmt = bill.amount_paid ?? 0;
     const statusClass = status === 'paid' ? 'paid' : (status === 'pending' ? 'pending' : 'unpaid');
     const statusLabel = status === 'paid' ? 'PAID' : (status === 'pending' ? 'PENDING' : 'UNPAID');
 
@@ -1413,6 +1412,9 @@ async function viewBill(id) {
 
     let grandTotal = 0;
 
+    // Unique players: name → { total, amount_paid, statuses[], method, note }
+    const byName = {};
+
     const framesHtml = sessions.map((session, idx) => {
       const gameName = session.game_type?.game_name || session.gameType?.game_name || 'Game';
       const players = session.players || [];
@@ -1420,6 +1422,23 @@ async function viewBill(id) {
 
       const playersHtml = players.map(p => {
         frameTotal += (p.total_amount || 0);
+
+        const key = (p.player_name || '').trim() || 'Unknown';
+        if (!byName[key]) {
+          byName[key] = {
+            name: key,
+            total: 0,
+            amount_paid: 0,
+            statuses: [],
+            method: p.payment_method || '',
+            note: p.payment_note || ''
+          };
+        }
+        byName[key].total += (p.total_amount || 0);
+        byName[key].amount_paid += (p.amount_paid || 0);
+        byName[key].statuses.push(p.payment_status || 'unpaid');
+        if (p.payment_method) byName[key].method = p.payment_method;
+        if (p.payment_note) byName[key].note = p.payment_note;
 
         const orders = p.orders || [];
         const ordersHtml = orders.length
@@ -1456,7 +1475,7 @@ async function viewBill(id) {
             ${ordersHtml}
             ${gameHtml}
             <div class="bill-line sub">
-              <span>Player total</span>
+              <span>Player total (this frame)</span>
               <span>${money(p.total_amount)}</span>
             </div>
           </div>`;
@@ -1482,6 +1501,78 @@ async function viewBill(id) {
         </div>`;
     }).join('');
 
+    // Resolve unique player payment status
+    const uniquePlayers = Object.values(byName).map(p => {
+      let st = 'unpaid';
+      if (p.statuses.every(s => s === 'paid')) st = 'paid';
+      else if (p.statuses.some(s => s === 'pending' || s === 'paid') || p.amount_paid > 0) st = 'pending';
+      return { ...p, status: st };
+    });
+
+    const summaryHtml = uniquePlayers.map((p, i) => {
+      const badge = p.status === 'paid' ? 'ok' : (p.status === 'pending' ? 'low' : 'out');
+      const safeName = encodeURIComponent(p.name);
+      return `
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid var(--border); gap:8px; flex-wrap:wrap;">
+          <div>
+            <strong>${p.name}</strong>
+            <span class="badge ${badge}" style="margin-left:6px; font-size:10px;">${p.status.toUpperCase()}</span>
+            ${p.amount_paid > 0 && p.status !== 'paid'
+              ? `<div style="font-size:11px; color:var(--text-dim); margin-top:2px;">Received ${money(p.amount_paid)} · Balance ${money(Math.max(0, p.total - p.amount_paid))}</div>`
+              : ''}
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <b>${money(p.total)}</b>
+            <button type="button" class="btn btn-sm btn-outline" onclick="openPlayerPayPanel(${i})">Pay</button>
+          </div>
+        </div>
+        <div id="player-pay-panel-${i}" style="display:none; padding:12px; margin-bottom:8px; background:rgba(0,0,0,0.2); border-radius:8px;">
+          <div style="display:flex; gap:6px; margin-bottom:10px;">
+            <button type="button" class="btn btn-sm btn-outline" onclick="saveUniquePlayerPay(${billId}, '${safeName}', 'unpaid', ${i})">Unpaid</button>
+            <button type="button" class="btn btn-sm btn-outline" onclick="showUniquePayForm(${i}, 'pending')">Pending</button>
+            <button type="button" class="btn btn-sm btn-outline" onclick="showUniquePayForm(${i}, 'paid')">Paid</button>
+          </div>
+          <div id="up-form-pending-${i}" style="display:none;">
+            <div class="field" style="margin:0 0 6px;">
+              <label>Amount received</label>
+              <input type="number" id="up-amt-${i}" value="${p.amount_paid || ''}" min="0" placeholder="e.g. 200">
+            </div>
+            <div class="field" style="margin:0 0 6px;">
+              <label>Paid By</label>
+              <div class="pay-method-grid">
+                <label class="pay-method-opt"><input type="radio" name="up-method-${i}" value="cash"><span>Cash</span></label>
+                <label class="pay-method-opt"><input type="radio" name="up-method-${i}" value="easypaisa"><span>EasyPaisa</span></label>
+                <label class="pay-method-opt"><input type="radio" name="up-method-${i}" value="jazzcash"><span>JazzCash</span></label>
+                <label class="pay-method-opt"><input type="radio" name="up-method-${i}" value="bank"><span>Bank</span></label>
+              </div>
+            </div>
+            <div class="field" style="margin:0 0 6px;">
+              <label>Note</label>
+              <input type="text" id="up-note-${i}" value="${(p.note || '').replace(/"/g, '&quot;')}" placeholder="Optional">
+            </div>
+            <button type="button" class="btn btn-primary btn-sm btn-block"
+              onclick="saveUniquePlayerPay(${billId}, '${safeName}', 'pending', ${i})">Save Pending</button>
+          </div>
+          <div id="up-form-paid-${i}" style="display:none;">
+            <div class="field" style="margin:0 0 6px;">
+              <label>Paid By *</label>
+              <div class="pay-method-grid">
+                <label class="pay-method-opt"><input type="radio" name="up-paid-method-${i}" value="cash"><span>Cash</span></label>
+                <label class="pay-method-opt"><input type="radio" name="up-paid-method-${i}" value="easypaisa"><span>EasyPaisa</span></label>
+                <label class="pay-method-opt"><input type="radio" name="up-paid-method-${i}" value="jazzcash"><span>JazzCash</span></label>
+                <label class="pay-method-opt"><input type="radio" name="up-paid-method-${i}" value="bank"><span>Bank</span></label>
+              </div>
+            </div>
+            <div class="field" style="margin:0 0 6px;">
+              <label>Note</label>
+              <input type="text" id="up-paid-note-${i}" value="${(p.note || '').replace(/"/g, '&quot;')}" placeholder="Optional">
+            </div>
+            <button type="button" class="btn btn-primary btn-sm btn-block"
+              onclick="saveUniquePlayerPay(${billId}, '${safeName}', 'paid', ${i})">Confirm Paid (${money(p.total)})</button>
+          </div>
+        </div>`;
+    }).join('');
+
     const dateLine = firstStart
       ? new Date(firstStart).toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })
       : '';
@@ -1500,112 +1591,206 @@ async function viewBill(id) {
 
         ${framesHtml}
 
+        <div style="margin-top:18px; padding-top:14px; border-top:1px solid var(--border);">
+          <div style="font-size:12px; color:var(--text-dim); text-transform:uppercase; margin-bottom:6px;">Players — total & payment</div>
+          ${summaryHtml || '<div style="color:#888;">No players</div>'}
+        </div>
+
         <div class="bill-grand">
           <div class="glabel">Grand Total</div>
           <div class="gamt">${money(grandTotal)}</div>
         </div>
-
-        ${(status === 'pending' || paidAmt > 0) ? `
-          <div style="margin-top:10px; font-size:12px; color:var(--text-dim); text-align:right;">
-            Received: <b style="color:var(--brass)">${money(paidAmt)}</b>
-            &nbsp;·&nbsp; Balance: <b style="color:#e8837a">${money(Math.max(0, grandTotal - paidAmt))}</b>
-          </div>` : ''}
+        <div style="margin-top:8px; font-size:12px; color:var(--text-dim); text-align:right;">
+          Received: <b style="color:var(--brass)">${money(paidAmt)}</b>
+          &nbsp;·&nbsp; Balance: <b style="color:#e8837a">${money(Math.max(0, grandTotal - paidAmt))}</b>
+        </div>
       </div>`;
 
     const actions = document.querySelector('#bill-detail-modal .modal-actions');
-    const payId = bill.id;
-
-    const payMethod = bill.payment_method || '';
-    const payNote = bill.payment_note || '';
-
     actions.innerHTML = `
-      <div style="width:100%; display:flex; flex-direction:column; gap:10px;">
-        <div style="display:flex; gap:8px;">
-          <button type="button" class="btn ${status === 'pending' ? 'btn-primary' : 'btn-outline'}" style="flex:1"
-            onclick="showPaymentPanel('pending')">Pending</button>
-          <button type="button" class="btn ${status === 'paid' ? 'btn-primary' : 'btn-outline'}" style="flex:1"
-            onclick="showPaymentPanel('paid')">Paid</button>
-          <button type="button" class="btn ${status === 'unpaid' ? 'btn-primary' : 'btn-outline'}" style="flex:1"
-            onclick="setBillPayment(${payId}, 'unpaid', 0)">Unpaid</button>
-        </div>
-
-        <!-- PENDING PANEL -->
-                <div id="pending-panel" style="display:${status === 'pending' ? 'block' : 'none'};">
-          <div class="field" style="margin:0 0 8px;">
-            <label>Amount Received (Rs)</label>
-            <input type="number" id="bill-amount-paid" value="${paidAmt || ''}" min="0" placeholder="e.g. 500">
-          </div>
-          <div class="field" style="margin:0 0 8px;">
-            <label>Paid By <span style="color:#e8837a">*</span></label>
-            <div class="pay-method-grid">
-              <label class="pay-method-opt">
-                <input type="radio" name="pay-method-pending" value="cash" ${payMethod === 'cash' ? 'checked' : ''}>
-                <span>Cash</span>
-              </label>
-              <label class="pay-method-opt">
-                <input type="radio" name="pay-method-pending" value="easypaisa" ${payMethod === 'easypaisa' ? 'checked' : ''}>
-                <span>EasyPaisa</span>
-              </label>
-              <label class="pay-method-opt">
-                <input type="radio" name="pay-method-pending" value="jazzcash" ${payMethod === 'jazzcash' ? 'checked' : ''}>
-                <span>JazzCash</span>
-              </label>
-              <label class="pay-method-opt">
-                <input type="radio" name="pay-method-pending" value="bank" ${payMethod === 'bank' ? 'checked' : ''}>
-                <span>Bank</span>
-              </label>
-            </div>
-          </div>
-          <div class="field" style="margin:0 0 8px;">
-            <label>Note (optional)</label>
-            <input type="text" id="bill-payment-note" value="${payNote || ''}" placeholder="e.g. Will pay tomorrow">
-          </div>
-          <button type="button" class="btn btn-primary btn-block"
-            onclick="savePendingAmount(${payId}, ${grandTotal})">Save Pending</button>
-        </div>
-
-        <!-- PAID PANEL -->
-        <div id="paid-panel" style="display:${status === 'paid' ? 'block' : 'none'};">
-          <div class="field" style="margin:0 0 8px;">
-            <label>Paid By <span style="color:#e8837a">*</span></label>
-                        <div class="pay-method-grid">
-              <label class="pay-method-opt">
-                <input type="radio" name="pay-method" value="cash" ${payMethod === 'cash' ? 'checked' : ''}>
-                <span>Cash</span>
-              </label>
-              <label class="pay-method-opt">
-                <input type="radio" name="pay-method" value="easypaisa" ${payMethod === 'easypaisa' ? 'checked' : ''}>
-                <span>EasyPaisa</span>
-              </label>
-              <label class="pay-method-opt">
-                <input type="radio" name="pay-method" value="jazzcash" ${payMethod === 'jazzcash' ? 'checked' : ''}>
-                <span>JazzCash</span>
-              </label>
-              <label class="pay-method-opt">
-                <input type="radio" name="pay-method" value="bank" ${payMethod === 'bank' ? 'checked' : ''}>
-                <span>Bank</span>
-              </label>
-            </div>
-          </div>
-          <div class="field" style="margin:0 0 8px;">
-            <label>Note (optional)</label>
-            <input type="text" id="bill-paid-note" value="${payNote || ''}" placeholder="Optional note">
-          </div>
-          <button type="button" class="btn btn-primary btn-block"
-            onclick="savePaidAmount(${payId}, ${grandTotal})">Confirm Paid</button>
-        </div>
-
-        <div style="display:flex; gap:8px;">
-          <button type="button" class="btn btn-outline" style="flex:1" onclick="closeModal('bill-detail-modal')">Close</button>
-          <button type="button" class="btn btn-primary" style="flex:1" onclick="window.print()">Print</button>
-        </div>
-      </div>
-    `;
+      <div style="width:100%; display:flex; gap:8px;">
+        <button type="button" class="btn btn-outline" style="flex:1" onclick="closeModal('bill-detail-modal')">Close</button>
+        <button type="button" class="btn btn-primary" style="flex:1" onclick="window.print()">Print</button>
+      </div>`;
 
     openModal('bill-detail-modal');
   } catch (e) {
     console.error(e);
     showError('Failed to load bill details');
+  }
+}
+
+function openPlayerPayPanel(index) {
+  const el = document.getElementById('player-pay-panel-' + index);
+  if (!el) return;
+  const open = el.style.display === 'block';
+  document.querySelectorAll('[id^="player-pay-panel-"]').forEach(p => p.style.display = 'none');
+  el.style.display = open ? 'none' : 'block';
+}
+
+function showUniquePayForm(index, type) {
+  const pend = document.getElementById('up-form-pending-' + index);
+  const paid = document.getElementById('up-form-paid-' + index);
+  if (pend) pend.style.display = type === 'pending' ? 'block' : 'none';
+  if (paid) paid.style.display = type === 'paid' ? 'block' : 'none';
+}
+
+async function saveUniquePlayerPay(billId, encodedName, status, index) {
+  const playerName = decodeURIComponent(encodedName);
+  let amount_paid = 0;
+  let payment_method = null;
+  let payment_note = null;
+
+  if (status === 'pending') {
+    amount_paid = Math.max(0, parseInt(document.getElementById('up-amt-' + index)?.value) || 0);
+    payment_method = document.querySelector(`input[name="up-method-${index}"]:checked`)?.value || null;
+    payment_note = (document.getElementById('up-note-' + index)?.value || '').trim() || null;
+    if (amount_paid <= 0) {
+      showError('Enter amount received');
+      return;
+    }
+  } else if (status === 'paid') {
+    payment_method = document.querySelector(`input[name="up-paid-method-${index}"]:checked`)?.value;
+    payment_note = (document.getElementById('up-paid-note-' + index)?.value || '').trim() || null;
+    if (!payment_method) {
+      showError('Select payment method');
+      return;
+    }
+  }
+
+  try {
+    const res = await fetch(`/cueboard/api/billing/${billId}/player-payment`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+      },
+      body: JSON.stringify({
+        player_name: playerName,
+        payment_status: status,
+        amount_paid,
+        payment_method,
+        payment_note
+      })
+    });
+
+    if (res.ok) {
+      showSuccess(status === 'paid' ? 'Marked paid' : (status === 'pending' ? 'Pending saved' : 'Marked unpaid'));
+      await viewBill(billId);
+      if (typeof loadBilling === 'function') loadBilling(typeof billingPage !== 'undefined' ? billingPage : 1);
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showError(err.message || 'Failed');
+    }
+  } catch (e) {
+    showError('Network error');
+  }
+}
+
+function togglePlayerPanel(playerId, type) {
+  const pend = document.getElementById('pp-pending-' + playerId);
+  const paid = document.getElementById('pp-paid-' + playerId);
+  if (pend) pend.style.display = type === 'pending' ? 'block' : 'none';
+  if (paid) paid.style.display = type === 'paid' ? 'block' : 'none';
+}
+
+async function setPlayerPayment(playerId, status, billId) {
+  try {
+    const res = await fetch(`/cueboard/api/billing/player/${playerId}/payment`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+      },
+      body: JSON.stringify({
+        payment_status: status,
+        amount_paid: 0,
+        payment_method: null,
+        payment_note: null
+      })
+    });
+    if (res.ok) {
+      showSuccess('Updated');
+      await viewBill(billId);
+      if (typeof loadBilling === 'function') loadBilling(typeof billingPage !== 'undefined' ? billingPage : 1);
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showError(err.message || 'Failed');
+    }
+  } catch (e) {
+    showError('Network error');
+  }
+}
+
+async function savePlayerPending(playerId, billId) {
+  const amount = Math.max(0, parseInt(document.getElementById('pp-amt-' + playerId)?.value) || 0);
+  const method = document.querySelector(`input[name="pp-method-${playerId}"]:checked`)?.value || null;
+  const note = (document.getElementById('pp-note-' + playerId)?.value || '').trim();
+
+  if (amount <= 0) {
+    showError('Enter amount received');
+    return;
+  }
+
+  try {
+    const res = await fetch(`/cueboard/api/billing/player/${playerId}/payment`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+      },
+      body: JSON.stringify({
+        payment_status: 'pending',
+        amount_paid: amount,
+        payment_method: method,
+        payment_note: note || null
+      })
+    });
+    if (res.ok) {
+      showSuccess('Pending saved');
+      await viewBill(billId);
+      if (typeof loadBilling === 'function') loadBilling(typeof billingPage !== 'undefined' ? billingPage : 1);
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showError(err.message || 'Failed');
+    }
+  } catch (e) {
+    showError('Network error');
+  }
+}
+
+async function savePlayerPaid(playerId, billId) {
+  const method = document.querySelector(`input[name="pp-paid-method-${playerId}"]:checked`)?.value;
+  const note = (document.getElementById('pp-paid-note-' + playerId)?.value || '').trim();
+
+  if (!method) {
+    showError('Select payment method');
+    return;
+  }
+
+  try {
+    const res = await fetch(`/cueboard/api/billing/player/${playerId}/payment`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+      },
+      body: JSON.stringify({
+        payment_status: 'paid',
+        payment_method: method,
+        payment_note: note || null
+      })
+    });
+    if (res.ok) {
+      showSuccess('Marked paid');
+      await viewBill(billId);
+      if (typeof loadBilling === 'function') loadBilling(typeof billingPage !== 'undefined' ? billingPage : 1);
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showError(err.message || 'Failed');
+    }
+  } catch (e) {
+    showError('Network error');
   }
 }
 async function markPaid(id) {
@@ -2535,3 +2720,385 @@ async function deleteArcadeSale(id) {
     } else showError('Failed');
   } catch (e) { showError('Error'); }
 }
+
+
+
+
+
+/* ================= SHOP ================= */
+let shopCart = [];
+let shopSelectedCat = null; 
+
+async function loadShop() {
+  try {
+    const res = await fetch('/cueboard/api/shop/history');
+    if (!res.ok) return;
+    const data = await res.json();
+
+    const tEl = document.getElementById('shop-today-total');
+    if (tEl) tEl.textContent = money(data.today_total || 0);
+
+    const tbody = document.getElementById('shop-history-body');
+    if (!tbody) return;
+
+    const sales = data.sales || [];
+    if (!sales.length) {
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:#888;padding:24px;">No sales yet.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = sales.map(s => {
+      const t = s.sold_at ? new Date(s.sold_at).toLocaleString() : '—';
+      const items = (s.items || []).map(i => `${i.item_name}×${i.qty}`).join(', ');
+      return `
+        <tr>
+          <td style="font-size:12px;">${t}</td>
+          <td>${s.customer_name || 'Walk-in'}</td>
+          <td style="font-size:12px;">${items || '—'}</td>
+          <td><b>${money(s.total)}</b></td>
+          <td>${s.payment_method || '—'}</td>
+          <td>
+            <button class="btn btn-sm btn-danger" onclick="deleteShopSale(${s.id})">Delete</button>
+          </td>
+        </tr>`;
+    }).join('');
+  } catch (e) {
+    console.error('Shop load failed', e);
+  }
+}
+
+function openShopModal() {
+  shopCart = [];
+  shopSelectedCat = null;
+  document.getElementById('shop-customer').value = '';
+  document.querySelector('input[name="shop-pay"][value="cash"]').checked = true;
+
+  renderShopCategories();
+  renderShopItems();
+  renderShopCart();
+  openModal('shop-modal');
+}
+
+function renderShopCategories() {
+  const row = document.getElementById('shop-cat-row');
+  if (!row) return;
+
+  const cats = (typeof categories !== 'undefined' ? categories : [])
+    .filter(c => c.status == 1);
+
+  let html = `
+    <button type="button" class="btn btn-sm ${shopSelectedCat === null ? 'btn-primary' : 'btn-outline'}"
+      onclick="selectShopCat(null)">All</button>`;
+
+  cats.forEach(c => {
+    html += `
+      <button type="button" class="btn btn-sm ${shopSelectedCat == c.id ? 'btn-primary' : 'btn-outline'}"
+        onclick="selectShopCat(${c.id})">${c.name}</button>`;
+  });
+
+  row.innerHTML = html;
+}
+function selectShopCat(catId) {
+  shopSelectedCat = catId;
+  renderShopCategories();
+  renderShopItems();
+}
+
+function renderShopItems() {
+  const grid = document.getElementById('shop-item-grid');
+  if (!grid) return;
+
+  let list = (stock || []).filter(s => s.quantity > 0);
+
+  if (shopSelectedCat !== null) {
+    list = list.filter(s => s.category_id == shopSelectedCat);
+  }
+
+  if (!list.length) {
+    grid.innerHTML = `<div style="grid-column:1/-1; color:#888; padding:20px; text-align:center;">No items in this category</div>`;
+    return;
+  }
+
+  grid.innerHTML = list.map(s => `
+    <button type="button" class="shop-item-btn" onclick="shopTapItem(${s.id})">
+      <strong>${s.item_name}</strong>
+      <span class="price">${money(s.price)}</span>
+      <span class="left">${s.quantity} left</span>
+    </button>
+  `).join('');
+}
+
+function shopTapItem(inventoryId) {
+  const inv = (stock || []).find(s => s.id == inventoryId);
+  if (!inv || inv.quantity <= 0) {
+    showError('Out of stock');
+    return;
+  }
+
+  const existing = shopCart.find(c => c.inventory_id == inventoryId);
+  const newQty = (existing ? existing.quantity : 0) + 1;
+
+  if (newQty > inv.quantity) {
+    showError(`Only ${inv.quantity} left`);
+    return;
+  }
+
+  if (existing) {
+    existing.quantity = newQty;
+    existing.total = existing.quantity * existing.unit_price;
+  } else {
+    shopCart.push({
+      inventory_id: inv.id,
+      item_name: inv.item_name,
+      quantity: 1,
+      unit_price: inv.price,
+      total: inv.price,
+    });
+  }
+  renderShopCart();
+}
+
+function shopAddItem() {
+  const sel = document.getElementById('shop-inv-select');
+  const opt = sel?.selectedOptions?.[0];
+  if (!opt || !opt.value) {
+    showError('Select an item');
+    return;
+  }
+
+  const id = parseInt(opt.value);
+  const price = parseInt(opt.dataset.price) || 0;
+  const name = opt.dataset.name || 'Item';
+  const stockLeft = parseInt(opt.dataset.stock) || 0;
+  const qty = Math.max(1, parseInt(document.getElementById('shop-inv-qty').value) || 1);
+
+  const existing = shopCart.find(c => c.inventory_id === id);
+  const newQty = (existing ? existing.quantity : 0) + qty;
+
+  if (newQty > stockLeft) {
+    showError(`Only ${stockLeft} left in stock`);
+    return;
+  }
+
+  if (existing) {
+    existing.quantity = newQty;
+    existing.total = existing.quantity * existing.unit_price;
+  } else {
+    shopCart.push({
+      inventory_id: id,
+      item_name: name,
+      quantity: qty,
+      unit_price: price,
+      total: qty * price,
+    });
+  }
+
+  document.getElementById('shop-inv-qty').value = 1;
+  renderShopCart();
+}
+
+function shopChangeQty(index, delta) {
+  const line = shopCart[index];
+  if (!line) return;
+
+  const inv = (stock || []).find(s => s.id == line.inventory_id);
+  const max = inv ? inv.quantity : 9999;
+  const next = line.quantity + delta;
+
+  if (next < 1) {
+    shopCart.splice(index, 1);
+  } else if (next > max) {
+    showError(`Only ${max} in stock`);
+    return;
+  } else {
+    line.quantity = next;
+    line.total = line.quantity * line.unit_price;
+  }
+  renderShopCart();
+}
+
+function shopRemoveItem(index) {
+  shopCart.splice(index, 1);
+  renderShopCart();
+}
+
+function renderShopCart() {
+  const box = document.getElementById('shop-cart');
+  const total = shopCart.reduce((s, c) => s + c.total, 0);
+
+  if (!shopCart.length) {
+    box.innerHTML = `<div style="color:#888; padding:10px; text-align:center;">Tap items above to add</div>`;
+  } else {
+    box.innerHTML = shopCart.map((c, i) => `
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--border); gap:8px;">
+        <div style="flex:1; min-width:0;">
+          <strong style="font-size:13px;">${c.item_name}</strong>
+          <div style="font-size:11px; color:var(--text-dim);">${money(c.unit_price)} each</div>
+        </div>
+        <div style="display:flex; align-items:center; gap:6px;">
+          <button type="button" class="btn btn-sm btn-outline" onclick="shopChangeQty(${i}, -1)">−</button>
+          <span style="min-width:22px; text-align:center;">${c.quantity}</span>
+          <button type="button" class="btn btn-sm btn-outline" onclick="shopChangeQty(${i}, 1)">+</button>
+        </div>
+        <b style="min-width:64px; text-align:right;">${money(c.total)}</b>
+        <button type="button" class="btn btn-sm btn-danger" onclick="shopRemoveItem(${i})">✕</button>
+      </div>
+    `).join('');
+  }
+
+  const label = document.getElementById('shop-total-label');
+  if (label) label.textContent = `Total: ${money(total)}`;
+}
+
+async function saveShopSale() {
+  if (!shopCart.length) {
+    showError('Add at least one item');
+    return;
+  }
+
+  const customer = (document.getElementById('shop-customer').value || '').trim();
+  const method = document.querySelector('input[name="shop-pay"]:checked')?.value || 'cash';
+
+  try {
+    const res = await fetch('/cueboard/api/shop/sale', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+      },
+      body: JSON.stringify({
+        customer_name: customer || null,
+        payment_method: method,
+        items: shopCart.map(c => ({
+          inventory_id: c.inventory_id,
+          quantity: c.quantity,
+        })),
+      })
+    });
+
+    if (res.ok) {
+      closeModal('shop-modal');
+      await loadData(); // stock refresh
+      await loadShop();
+      showSuccess('Sale saved');
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showError(err.message || 'Failed to save');
+    }
+  } catch (e) {
+    showError('Network error');
+  }
+}
+
+async function deleteShopSale(id) {
+  const result = await showConfirm('Delete this sale? Stock will be restored.');
+  if (!result.isConfirmed) return;
+
+  try {
+    const res = await fetch(`/cueboard/api/shop/sale/${id}`, {
+      method: 'DELETE',
+      headers: { 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '' }
+    });
+    if (res.ok) {
+      await loadData();
+      await loadShop();
+      showSuccess('Deleted');
+    } else {
+      showError('Failed');
+    }
+  } catch (e) {
+    showError('Error');
+  }
+}
+
+
+let billingUnlocked = false;
+
+async function openBillingProtected() {
+  try {
+    const res = await fetch('/cueboard/api/billing/unlock-status', {
+      headers: { 'Accept': 'application/json' },
+      credentials: 'same-origin'
+    });
+    const data = await res.json();
+    if (data.unlocked) {
+      billingUnlocked = true;
+      loadBilling(1);
+      return;
+    }
+  } catch (e) {}
+
+  billingUnlocked = false;
+  // view pehle se switch ho chuka hai — content empty / locked dikhao
+  const tbody = document.getElementById('billing-body');
+  if (tbody) {
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:40px;color:#888;">
+      Locked — enter password to view billing history.
+    </td></tr>`;
+  }
+  const pag = document.getElementById('billing-pagination');
+  if (pag) pag.innerHTML = '';
+
+  const err = document.getElementById('billing-lock-error');
+  if (err) { err.style.display = 'none'; err.textContent = ''; }
+  const input = document.getElementById('billing-lock-password');
+  if (input) {
+    input.value = '';
+    setTimeout(() => input.focus(), 100);
+  }
+  openModal('billing-lock-modal');
+}
+
+async function submitBillingUnlock() {
+  const password = (document.getElementById('billing-lock-password')?.value || '').trim();
+  const err = document.getElementById('billing-lock-error');
+  if (!password) {
+    if (err) { err.textContent = 'Enter password'; err.style.display = 'block'; }
+    return;
+  }
+
+  try {
+    const res = await fetch('/cueboard/api/billing/unlock', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+      },
+      credentials: 'same-origin',
+      body: JSON.stringify({ password })
+    });
+
+    if (res.ok) {
+      billingUnlocked = true;
+      closeModal('billing-lock-modal');
+      loadBilling(1);
+      showSuccess('Billing unlocked');
+    } else {
+      const data = await res.json().catch(() => ({}));
+      if (err) {
+        err.textContent = data.message || 'Wrong password';
+        err.style.display = 'block';
+      }
+      showError(data.message || 'Wrong password');
+    }
+  } catch (e) {
+    showError('Network error');
+  }
+}
+
+function cancelBillingUnlock() {
+  closeModal('billing-lock-modal');
+  // wapas dashboard (ya pehle wala safe view)
+  switchView('dashboard');
+}
+
+// Enter key on password field
+document.addEventListener('DOMContentLoaded', () => {
+  const input = document.getElementById('billing-lock-password');
+  if (input) {
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') submitBillingUnlock();
+    });
+  }
+});

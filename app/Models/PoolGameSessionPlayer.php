@@ -10,6 +10,7 @@ class PoolGameSessionPlayer extends Model
         'pool_game_session_id',
         'player_name',
         'total_amount',
+        'payment_status', 'amount_paid', 'payment_method', 'payment_note',
     ];
 
     public function session()

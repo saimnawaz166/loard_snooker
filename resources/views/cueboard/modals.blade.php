@@ -362,3 +362,69 @@
     </div>
   </div>
 </div>
+
+
+<div class="modal-backdrop" id="shop-modal">
+  <div class="modal modal-shop">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+      <h3 style="margin:0;">Shop Sale</h3>
+      <button type="button" class="btn btn-outline btn-sm" onclick="closeModal('shop-modal')">✕</button>
+    </div>
+
+    <div class="field" style="margin-bottom:12px;">
+      <label>Customer (optional)</label>
+      <input type="text" id="shop-customer" placeholder="Walk-in">
+    </div>
+
+    <div class="shop-layout">
+      <!-- LEFT: categories + items -->
+      <div class="shop-left">
+        <div style="font-size:11px; color:var(--text-dim); text-transform:uppercase; margin-bottom:6px;">Category</div>
+        <div id="shop-cat-row" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px;"></div>
+
+        <div style="font-size:11px; color:var(--text-dim); text-transform:uppercase; margin-bottom:6px;">Items — tap to add</div>
+        <div id="shop-item-grid" class="shop-item-grid"></div>
+      </div>
+
+      <!-- RIGHT: bill -->
+      <div class="shop-right">
+        <div style="font-size:11px; color:var(--text-dim); text-transform:uppercase; margin-bottom:6px;">Bill</div>
+        <div id="shop-cart" class="shop-cart-box"></div>
+
+        <div id="shop-total-label" class="shop-total">Total: Rs 0</div>
+
+        <div class="field" style="margin-top:12px; margin-bottom:0;">
+          <label>Paid By</label>
+          <div class="pay-method-grid">
+            <label class="pay-method-opt"><input type="radio" name="shop-pay" value="cash" checked><span>Cash</span></label>
+            <label class="pay-method-opt"><input type="radio" name="shop-pay" value="easypaisa"><span>EasyPaisa</span></label>
+            <label class="pay-method-opt"><input type="radio" name="shop-pay" value="jazzcash"><span>JazzCash</span></label>
+            <label class="pay-method-opt"><input type="radio" name="shop-pay" value="bank"><span>Bank</span></label>
+          </div>
+        </div>
+
+        <div class="modal-actions" style="margin-top:14px; padding-top:0;">
+          <button class="btn btn-outline" style="flex:1" onclick="closeModal('shop-modal')">Cancel</button>
+          <button class="btn btn-primary" style="flex:1" onclick="saveShopSale()">OK — Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<div class="modal-backdrop" id="billing-lock-modal">
+  <div class="modal" style="max-width:380px;">
+    <h3>Billing Locked</h3>
+    <p class="sub">Enter password to open billing history.</p>
+    <div class="field">
+      <label>Password</label>
+      <input type="password" id="billing-lock-password" placeholder="••••" autocomplete="off">
+    </div>
+    <div id="billing-lock-error" style="color:#e8837a; font-size:12px; margin-bottom:10px; display:none;"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-outline" style="flex:1" onclick="cancelBillingUnlock()">Cancel</button>
+      <button type="button" class="btn btn-primary" style="flex:1" onclick="submitBillingUnlock()">Unlock</button>
+    </div>
+  </div>
+</div>
