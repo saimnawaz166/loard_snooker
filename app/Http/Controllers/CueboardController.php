@@ -1341,4 +1341,77 @@ class CueboardController extends Controller
             abort(response()->json(['message' => 'Billing locked', 'locked' => true], 403));
         }
     }
+    public function updateBillDiscount(Request $request, $id)
+    {
+        $this->assertBillingUnlocked(); // agar password gate laga hai
+
+        $validated = $request->validate([
+            'session_id'      => 'required|exists:pool_game_sessions,id',
+            'discount_amount' => 'required|integer|min:0',
+        ]);
+
+        $anchor = PoolGameSession::findOrFail($id);
+        $session = PoolGameSession::with('players')->findOrFail($validated['session_id']);
+
+        // Sirf isi bill group / single bill ki session
+        if ($anchor->bill_group_id) {
+            if ($session->bill_group_id !== $anchor->bill_group_id) {
+                return response()->json(['message' => 'Session not on this bill'], 422);
+            }
+        } else {
+            if ((int) $session->id !== (int) $anchor->id) {
+                return response()->json(['message' => 'Session not on this bill'], 422);
+            }
+        }
+
+        if ($session->status !== 'completed') {
+            return response()->json(['message' => 'Only completed sessions'], 422);
+        }
+
+        $gamePrice = (int) ($session->game_price ?? 0);
+        $oldDiscounted = (int) ($session->discounted_game_price ?? $gamePrice);
+        $discAmt = min((int) $validated['discount_amount'], $gamePrice); // max = full price
+        $newDiscounted = max(0, $gamePrice - $discAmt);
+        $discountPercent = $gamePrice > 0 ? (int) round(($discAmt / $gamePrice) * 100) : 0;
+
+        $loserId = $session->loser_player_id;
+        if (!$loserId) {
+            return response()->json(['message' => 'No loser on this frame'], 422);
+        }
+
+        $loser = PoolGameSessionPlayer::where('id', $loserId)
+            ->where('pool_game_session_id', $session->id)
+            ->firstOrFail();
+
+        DB::beginTransaction();
+        try {
+            // Pehle purana game charge hatao, naya lagao (orders safe rehte hain)
+            $ordersTotal = (int) $loser->orders()->sum('total'); // agar orders relation hai
+            // Safer without relying on orders sum:
+            // total_amount = orders + game; subtract old game, add new game
+            $newTotal = max(0, (int) $loser->total_amount - $oldDiscounted + $newDiscounted);
+
+            $loser->update(['total_amount' => $newTotal]);
+
+            $session->update([
+                'discount_percent'      => $discountPercent,
+                'discounted_game_price' => $newDiscounted,
+            ]);
+
+            DB::commit();
+
+            return response()->json([
+                'message' => 'Discount updated',
+                'session_id' => $session->id,
+                'game_price' => $gamePrice,
+                'discount_amount' => $discAmt,
+                'discounted_game_price' => $newDiscounted,
+                'discount_percent' => $discountPercent,
+                'loser_total' => $newTotal,
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['message' => 'Failed', 'error' => $e->getMessage()], 500);
+        }
+    }
 }

@@ -1411,14 +1411,18 @@ async function viewBill(id) {
     const lastEnd = sessions[sessions.length - 1]?.end_time;
 
     let grandTotal = 0;
-
-    // Unique players: name → { total, amount_paid, statuses[], method, note }
     const byName = {};
 
     const framesHtml = sessions.map((session, idx) => {
       const gameName = session.game_type?.game_name || session.gameType?.game_name || 'Game';
       const players = session.players || [];
       let frameTotal = 0;
+
+      const gamePrice = session.game_price || 0;
+      const discPrice = session.discounted_game_price ?? gamePrice;
+      const discAmt = Math.max(0, gamePrice - discPrice);
+      const discPct = session.discount_percent || 0;
+      const sid = session.id;
 
       const playersHtml = players.map(p => {
         frameTotal += (p.total_amount || 0);
@@ -1450,9 +1454,9 @@ async function viewBill(id) {
           : `<div class="bill-line indent"><span style="color:var(--text-faint)">No snacks / drinks</span><span>—</span></div>`;
 
         const isLoser = p.id == session.loser_player_id;
-        const original = session.game_price || 0;
-        const discounted = session.discounted_game_price ?? original;
-        const disc = session.discount_percent || 0;
+        const original = gamePrice;
+        const discounted = discPrice;
+        const disc = discPct;
 
         let gameHtml = '';
         if (isLoser) {
@@ -1486,6 +1490,28 @@ async function viewBill(id) {
       const t1 = session.start_time ? new Date(session.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
       const t2 = session.end_time ? new Date(session.end_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
 
+      const discountEditor = session.loser_player_id ? `
+        <div style="margin-top:12px; padding:10px; background:rgba(0,0,0,0.2); border-radius:8px; border:1px dashed var(--border);">
+          <div style="font-size:11px; color:var(--text-dim); text-transform:uppercase; margin-bottom:6px;">
+            Game discount (this frame)
+          </div>
+          <div style="font-size:12px; color:var(--text-dim); margin-bottom:8px;">
+            Game: <b style="color:var(--cream)">${money(gamePrice)}</b>
+            · Discount: <b style="color:#e8837a">${money(discAmt)}</b>${discPct ? ` (${discPct}%)` : ''}
+            · After: <b style="color:var(--felt-light)">${money(discPrice)}</b>
+          </div>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <input type="number" id="disc-amt-${sid}" min="0" max="${gamePrice}" value="${discAmt}"
+              placeholder="Discount Rs"
+              style="width:120px; background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:8px 10px; color:var(--cream);">
+            <button type="button" class="btn btn-sm btn-primary"
+              onclick="saveFrameDiscount(${billId}, ${sid}, ${gamePrice})">
+              Update Discount
+            </button>
+          </div>
+        </div>
+      ` : '';
+
       return `
         <div class="frame-block">
           <div class="frame-label">
@@ -1493,6 +1519,7 @@ async function viewBill(id) {
             <span>${t1}${t2 ? ' → ' + t2 : ''}</span>
           </div>
           ${playersHtml}
+          ${discountEditor}
           ${sessions.length > 1 ? `
             <div class="bill-line sub" style="border-top:1px dashed var(--border); margin-top:8px;">
               <span>Frame total</span>
@@ -1501,10 +1528,10 @@ async function viewBill(id) {
         </div>`;
     }).join('');
 
-    // Resolve unique player payment status
     const uniquePlayers = Object.values(byName).map(p => {
       let st = 'unpaid';
-      if (p.statuses.every(s => s === 'paid')) st = 'paid';
+      if (p.total <= 0) st = 'paid';
+      else if (p.statuses.every(s => s === 'paid')) st = 'paid';
       else if (p.statuses.some(s => s === 'pending' || s === 'paid') || p.amount_paid > 0) st = 'pending';
       return { ...p, status: st };
     });
@@ -1512,6 +1539,10 @@ async function viewBill(id) {
     const summaryHtml = uniquePlayers.map((p, i) => {
       const badge = p.status === 'paid' ? 'ok' : (p.status === 'pending' ? 'low' : 'out');
       const safeName = encodeURIComponent(p.name);
+      const payBtn = p.total > 0
+        ? `<button type="button" class="btn btn-sm btn-outline" onclick="openPlayerPayPanel(${i})">Pay</button>`
+        : `<span class="badge ok" style="font-size:10px;">AUTO PAID</span>`;
+
       return `
         <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid var(--border); gap:8px; flex-wrap:wrap;">
           <div>
@@ -1523,7 +1554,7 @@ async function viewBill(id) {
           </div>
           <div style="display:flex; align-items:center; gap:8px;">
             <b>${money(p.total)}</b>
-            <button type="button" class="btn btn-sm btn-outline" onclick="openPlayerPayPanel(${i})">Pay</button>
+            ${payBtn}
           </div>
         </div>
         <div id="player-pay-panel-${i}" style="display:none; padding:12px; margin-bottom:8px; background:rgba(0,0,0,0.2); border-radius:8px;">
@@ -1607,16 +1638,52 @@ async function viewBill(id) {
       </div>`;
 
     const actions = document.querySelector('#bill-detail-modal .modal-actions');
-    actions.innerHTML = `
-      <div style="width:100%; display:flex; gap:8px;">
-        <button type="button" class="btn btn-outline" style="flex:1" onclick="closeModal('bill-detail-modal')">Close</button>
-        <button type="button" class="btn btn-primary" style="flex:1" onclick="window.print()">Print</button>
-      </div>`;
+    if (actions) {
+      actions.innerHTML = `
+        <div style="width:100%; display:flex; gap:8px;">
+          <button type="button" class="btn btn-outline" style="flex:1" onclick="closeModal('bill-detail-modal')">Close</button>
+          <button type="button" class="btn btn-primary" style="flex:1" onclick="window.print()">Print</button>
+        </div>`;
+    }
 
     openModal('bill-detail-modal');
   } catch (e) {
     console.error(e);
     showError('Failed to load bill details');
+  }
+}
+
+async function saveFrameDiscount(billId, sessionId, gamePrice) {
+  const input = document.getElementById('disc-amt-' + sessionId);
+  let amount = Math.max(0, parseInt(input?.value) || 0);
+  if (amount > gamePrice) amount = gamePrice;
+
+  try {
+    const res = await fetch(`/cueboard/api/billing/${billId}/discount`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+      },
+      credentials: 'same-origin',
+      body: JSON.stringify({
+        session_id: sessionId,
+        discount_amount: amount
+      })
+    });
+
+    if (res.ok) {
+      showSuccess('Discount updated');
+      await viewBill(billId);
+      if (typeof loadBilling === 'function') {
+        loadBilling(typeof billingPage !== 'undefined' ? billingPage : 1);
+      }
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showError(err.message || 'Failed to update discount');
+    }
+  } catch (e) {
+    showError('Network error');
   }
 }
 

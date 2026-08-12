@@ -93,6 +93,7 @@ Route::middleware('auth')->group(function () {
         Route::post('/api/billing/unlock', [CueboardController::class, 'unlockBilling']);
         Route::get('/api/billing/unlock-status', [CueboardController::class, 'billingUnlockStatus']);
         Route::post('/api/billing/lock', [CueboardController::class, 'lockBilling']);
+        Route::post('/api/billing/{id}/discount', [CueboardController::class, 'updateBillDiscount']);
     });
 });
 
