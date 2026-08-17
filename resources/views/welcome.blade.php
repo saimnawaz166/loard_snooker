@@ -351,7 +351,7 @@
 <header id="siteHeader">
   <div class="wrap">
     <nav>
-      <a href="#" class="logo">LORD <span>ARENA</span></a>
+      <a href="#" class="logo">LORDS <span>ARENA</span></a>
       <ul class="nav-links">
         <li><a href="#about">The Club</a></li>
         <li><a href="#facilities">Tables</a></li>
